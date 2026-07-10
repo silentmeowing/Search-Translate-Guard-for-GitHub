@@ -1,0 +1,13 @@
+# Store and development packages
+*.zip
+*.crx
+
+# Never commit extension signing keys
+*.pem
+
+# Local/browser artifacts
+.DS_Store
+Thumbs.db
+work/
+dist/
+node_modules/
