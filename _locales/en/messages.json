@@ -1,0 +1,23 @@
+{
+  "extensionName": {
+    "message": "Search Translate Guard for GitHub"
+  },
+  "extensionDescription": {
+    "message": "Keeps GitHub search usable during automatic page translation and supplies a local fallback search dialog when needed."
+  },
+  "fallbackTitle": {
+    "message": "GitHub Search"
+  },
+  "fallbackNotice": {
+    "message": "Native search did not open reliably. Compatibility search is active."
+  },
+  "fallbackInputLabel": {
+    "message": "GitHub search query"
+  },
+  "searchButton": {
+    "message": "Search"
+  },
+  "fallbackHint": {
+    "message": "Enter to search · Esc to close"
+  }
+}

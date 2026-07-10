@@ -1,0 +1,23 @@
+{
+  "extensionName": {
+    "message": "GitHub 搜索翻译保护器"
+  },
+  "extensionDescription": {
+    "message": "防止网页自动翻译破坏 GitHub 搜索；原生搜索失效时自动提供本地兼容搜索框。"
+  },
+  "fallbackTitle": {
+    "message": "GitHub 搜索"
+  },
+  "fallbackNotice": {
+    "message": "原生搜索未能稳定打开，已自动切换到兼容搜索。"
+  },
+  "fallbackInputLabel": {
+    "message": "GitHub 搜索内容"
+  },
+  "searchButton": {
+    "message": "搜索"
+  },
+  "fallbackHint": {
+    "message": "按 Enter 搜索 · 按 Esc 关闭"
+  }
+}
