@@ -6,15 +6,16 @@ Full-page translators modify the live DOM rather than only painting translated t
 
 GitHub's global search is one instance of that wider problem. It is a dynamic `qbsearch-input` custom element with nested dialog and query-builder components. Translation timing can interfere with its initialization or expansion after a reload or Turbo navigation.
 
-The production extension remains deliberately limited to GitHub. The implementation separates reusable translation protection from GitHub-specific selectors and recovery behavior so that new sites can be evaluated without copying the entire script.
+GitHub remains the only built-in site adapter. The implementation also supports data-only rules for sites the user explicitly authorizes, without copying GitHub-specific recovery behavior or granting automatic access to every site.
 
 ## Generated entry point
 
-The extension and userscript both execute `GitHub-Search-Translate-Guard.user.js`. This is a committed generated artifact assembled by `scripts/build.mjs` from:
+The extension and userscript both execute `GitHub-Search-Translate-Guard.user.js` on GitHub. A second committed artifact, `Site-Translate-Guard.content.js`, is dynamically registered only for user-authorized origins. `scripts/build.mjs` assembles them from:
 
 1. `src/core.js` — adapter registration, early scanning, mutation handling, lifecycle events, activation rules, and recovery scheduling.
 2. `src/adapters/github.js` — GitHub selectors, health check, repository scope, and fallback dialog.
 3. `src/bootstrap.js` — starts the registered adapters.
+4. `src/adapters/site-rules.js` — loads local selectors, protects matching subtrees, accepts live rule updates, and safely restores attributes when rules are cleared.
 
 Run `npm run build` after editing source files. CI runs `npm run build:check` and rejects a stale generated userscript.
 
@@ -44,6 +45,21 @@ Activation of GitHub search by pointer or `/` schedules one deduplicated check a
 
 If the check fails, the adapter creates a local Shadow DOM dialog. It preserves the current `data-scope` value when present and navigates directly to GitHub's `/search?q=...` endpoint on submit.
 
+## User-authorized site rules
+
+The optional site workflow has four extension contexts:
+
+1. `popup/` displays the current origin and asks the user to grant, inspect, or remove protection.
+2. `src/background/service-worker.js` validates messages, stores versioned data-only rules, and registers one persistent `document_start` script per authorized origin.
+3. `src/picker.js` lets the user choose a component boundary. It generates a structural selector and a fingerprint containing only tag, role, type, name, and landmark metadata.
+4. `Site-Translate-Guard.content.js` reads rules from local extension storage and activates the generic adapter. It observes later DOM additions through the same core.
+
+The browser permission prompt is initiated from the popup. `activeTab` supports the one-time picker, while HTTP and HTTPS origins remain in `optional_host_permissions`. Dynamic content scripts require Chrome/Edge 96 or later.
+
+Rules are keyed by exact origin, even though Chromium match patterns grant a hostname across ports. When a dynamically registered script runs on a different port, the adapter finds no matching exact-origin configuration and performs no protection.
+
+The picker favors IDs and stable data attributes, then builds a bounded structural selector from roles, names, types, stable classes, and ancestry. It deliberately excludes visible text and input values. Users can move the selected boundary to a parent before confirming.
+
 ```text
 Page or framework adds candidate content
         |
@@ -56,18 +72,30 @@ User activates GitHub search
         +--> native search healthy ------> keep native UI
         |
         +--> native search unhealthy ----> GitHub Shadow DOM fallback
+
+User opens extension on another site
+        |
+        +--> browser grants current hostname permission
+                 |
+                 +--> user selects component boundary
+                          |
+                          +--> local structural rule
+                                   |
+                                   +--> persistent document_start protection
 ```
 
 ## Security and scope
 
-- The manifest still matches only `https://github.com/*` and requests no browser API or host permissions.
+- The manifest statically matches only `https://github.com/*`. `activeTab`, `scripting`, and `storage` support the explicit user workflow; other HTTP and HTTPS hosts remain optional permissions.
 - The extension does not patch global DOM prototypes. Silencing invalid `removeChild` or `insertBefore` calls can leave stale or missing UI without repairing application state.
-- There is no developer server, analytics endpoint, storage layer, remote script, or runtime dependency.
+- There is no developer server, analytics endpoint, remote script, or runtime dependency.
+- Local extension storage contains only origin-scoped structural rules and never page text or field values.
 - Playwright is a development-only dependency and is not referenced by the extension manifest or generated userscript.
-- A future opt-in site mode would require separate permission, UI, privacy, and store review. It is not part of version 2.1.0.
 
 ## Limitations
 
 - Future GitHub redesigns may require adapter selector or health-check updates.
 - The fallback intentionally provides direct query submission, not native suggestions or saved searches.
 - `translate="no"` is a request to translation systems, not a guarantee that every third-party translator will respect the boundary.
+- Generic site rules prevent translation inside a selected boundary; they do not infer business semantics or provide automatic recovery UI.
+- Closed shadow roots and cross-origin frames cannot be selected from the top-level page without separate support and permissions.

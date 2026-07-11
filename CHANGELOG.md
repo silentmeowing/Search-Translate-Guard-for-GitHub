@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.0] - 2026-07-11
+
+### Added
+
+- User-initiated, per-site optional access for HTTP and HTTPS pages.
+- A localized popup for enabling, inspecting, clearing, and disabling site protection.
+- An on-page component picker that stores structural selectors and non-text fingerprints.
+- Persistent `document_start` registration for origins that the user explicitly authorizes.
+- A generated generic site-rule content script that coexists with the built-in GitHub adapter.
+
+### Validation
+
+- Added service-worker state-machine, late-adapter, rule restoration, selector privacy, picker, and unpacked-extension tests.
+
+### Permissions and privacy
+
+- Added `activeTab`, `scripting`, and `storage` for the user-authorized workflow.
+- Declared HTTP/HTTPS origins as optional host permissions; no non-GitHub site is granted automatically.
+- Stored rules remain local and contain no input values or visible page text.
+
 ## [2.1.0] - 2026-07-11
 
 ### Changed
