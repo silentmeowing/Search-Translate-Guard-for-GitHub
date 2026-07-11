@@ -141,7 +141,7 @@ async function unregisterSiteScript(scriptId) {
   if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: [scriptId] });
 }
 
-async function notifyRulesUpdated(tabId, origin, rules) {
+async function notifyRulesUpdated(tabId, origin, rules, enabled = true) {
   const tabIds = new Set(Number.isInteger(tabId) ? [tabId] : []);
   try {
     const tabs = await chrome.tabs.query({ url: [originPattern(origin)] });
@@ -154,19 +154,21 @@ async function notifyRulesUpdated(tabId, origin, rules) {
   await Promise.allSettled([...tabIds].map((id) => chrome.tabs.sendMessage(id, {
     type: "site-guard:rules-updated",
     origin,
+    enabled,
     rules
   })));
 }
 
 async function readRuntimeRuleHealth(origin, tabId) {
-  if (!Number.isInteger(tabId)) return new Map();
+  const unavailable = () => ({ states: new Map(), observedRiskCount: 0 });
+  if (!Number.isInteger(tabId)) return unavailable();
   try {
     await assertTabOrigin(origin, tabId);
     const response = await chrome.tabs.sendMessage(tabId, {
       type: "site-guard:get-rule-health",
       origin
     });
-    if (response?.origin !== origin || !Array.isArray(response.rules)) return new Map();
+    if (response?.origin !== origin || !Array.isArray(response.rules)) return unavailable();
     const states = new Map();
     for (const entry of response.rules.slice(0, MAX_RULES_PER_SITE)) {
       const id = typeof entry?.id === "string" ? entry.id : "";
@@ -174,9 +176,12 @@ async function readRuntimeRuleHealth(origin, tabId) {
         states.set(id, entry.state);
       }
     }
-    return states;
+    const observedRiskCount = Number.isInteger(response.observedRiskCount)
+      ? Math.max(0, Math.min(response.observedRiskCount, 24))
+      : 0;
+    return { states, observedRiskCount };
   } catch {
-    return new Map();
+    return unavailable();
   }
 }
 
@@ -186,19 +191,20 @@ async function siteStatus(origin, tabId) {
   const site = config.sites[normalizedOrigin];
   const permissionGranted = await hasOriginPermission(normalizedOrigin);
   const storedRules = Array.isArray(site?.rules) ? site.rules : [];
-  const runtimeStates = site?.enabled && permissionGranted
+  const runtimeHealth = site?.enabled && permissionGranted
     ? await readRuntimeRuleHealth(normalizedOrigin, tabId)
-    : new Map();
+    : { states: new Map(), observedRiskCount: 0 };
   return {
     origin: normalizedOrigin,
     builtIn: normalizedOrigin === "https://github.com",
     permissionGranted,
     enabled: Boolean(site?.enabled && permissionGranted),
     ruleCount: storedRules.length,
+    observedRiskCount: runtimeHealth.observedRiskCount,
     rules: storedRules.map((rule) => ({
       id: rule.id,
       selector: rule.selector,
-      state: runtimeStates.get(rule.id) || "unavailable"
+      state: runtimeHealth.states.get(rule.id) || "unavailable"
     }))
   };
 }
@@ -230,7 +236,7 @@ async function disableSite(origin, tabId) {
   site.enabled = false;
   await saveConfig(config);
   await unregisterSiteScript(site.scriptId);
-  await notifyRulesUpdated(tabId, normalizedOrigin, []);
+  await notifyRulesUpdated(tabId, normalizedOrigin, [], false);
   return siteStatus(normalizedOrigin);
 }
 

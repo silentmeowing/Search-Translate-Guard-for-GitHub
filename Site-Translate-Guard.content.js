@@ -191,6 +191,314 @@
   });
 })();
 
+// Source: src/risk-detector.js
+(() => {
+  "use strict";
+
+  const detectorSymbol = Symbol.for("search-translate-guard.risk-detector");
+  if (globalThis[detectorSymbol]) return;
+
+  const compositeRoles = new Set([
+    "combobox", "listbox", "menu", "tree", "grid", "tablist"
+  ]);
+  const frameworkPrefixes = [
+    "data-radix-", "data-headlessui-", "data-reach-", "data-floating-ui-"
+  ];
+  const ignoredTags = new Set([
+    "html", "head", "body", "script", "style", "link", "meta", "svg", "path"
+  ]);
+
+  function addSignal(result, name, weight) {
+    if (result.reasons.includes(name)) return;
+    result.reasons.push(name);
+    result.score += weight;
+  }
+
+  function isVisible(element) {
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 8 || rect.height < 8) return false;
+    const style = getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden";
+  }
+
+  /**
+   * Find a bounded interactive component boundary without reading text.
+   * @param {Element} target
+   * @returns {Element | null}
+   */
+  function boundaryFor(target) {
+    if (!(target instanceof Element)) return null;
+    if ([document.body, document.documentElement].includes(target)) return null;
+    const semantic = target.closest([
+      "input", "textarea", "select", "button", "[contenteditable=true]",
+      "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]",
+      "[role=tree]", "[role=grid]", "[role=tablist]", "[role=textbox]"
+    ].join(",")) || target;
+
+    let candidate = semantic;
+    let ancestor = semantic.parentElement;
+    for (let depth = 0; ancestor && depth < 3; depth += 1, ancestor = ancestor.parentElement) {
+      if (
+        ancestor.localName.includes("-") ||
+        ancestor.matches("[role=combobox], [role=listbox], [role=dialog], [role=menu], [role=tree], [role=grid], [role=tablist]")
+      ) {
+        candidate = ancestor;
+        break;
+      }
+    }
+    return [document.body, document.documentElement].includes(candidate) ? null : candidate;
+  }
+
+  /**
+   * Score structural interaction signals only. Visible text, field values, and
+   * application data are deliberately excluded.
+   * @param {Element} element
+   * @returns {{ score: number, reasons: string[] }}
+   */
+  function score(element) {
+    const result = { score: 0, reasons: [] };
+    if (!(element instanceof Element) || ignoredTags.has(element.localName)) return result;
+
+    const tag = element.localName;
+    const role = element.getAttribute("role")?.toLowerCase() || "";
+    if (tag.includes("-")) {
+      addSignal(result, "custom-element", 2);
+      if (element.querySelector([
+        "input", "textarea", "select", "button", "[contenteditable]",
+        "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]"
+      ].join(","))) {
+        addSignal(result, "interactive-descendant", 2);
+      }
+    }
+    if (tag === "dialog" || role === "dialog" || role === "alertdialog") {
+      addSignal(result, "dialog", 5);
+    }
+    if (compositeRoles.has(role)) addSignal(result, "composite-role", 5);
+    if (tag === "select") addSignal(result, "select-control", 4);
+    if (
+      tag === "textarea" ||
+      role === "textbox" ||
+      (tag === "input" && !["hidden", "checkbox", "radio", "submit", "button"].includes(
+        element.getAttribute("type")?.toLowerCase() || "text"
+      ))
+    ) {
+      addSignal(result, "editable-control", 2);
+    }
+    if (element.matches('[contenteditable="true"], [contenteditable="plaintext-only"]')) {
+      addSignal(result, "editable-control", 2);
+    }
+    if (element.hasAttribute("aria-controls")) addSignal(result, "aria-controls", 2);
+    if (element.hasAttribute("aria-expanded")) addSignal(result, "aria-expanded", 2);
+    if (element.hasAttribute("aria-haspopup")) addSignal(result, "aria-popup", 2);
+    if (element.hasAttribute("popover")) addSignal(result, "popover", 3);
+    if (element.hasAttribute("data-state")) addSignal(result, "framework-state", 2);
+
+    for (const attribute of element.attributes) {
+      if (frameworkPrefixes.some((prefix) => attribute.name.startsWith(prefix))) {
+        addSignal(result, "framework-state", 2);
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * @param {Document | Element} [root]
+   * @param {{ maxElements?: number, maxSuggestions?: number, minimumScore?: number }} [options]
+   * @returns {{ element: Element, score: number, reasons: string[] }[]}
+   */
+  function detect(root = document, options = {}) {
+    const maxElements = Math.max(1, Math.min(Number(options.maxElements) || 3000, 5000));
+    const maxSuggestions = Math.max(1, Math.min(Number(options.maxSuggestions) || 24, 50));
+    const minimumScore = Math.max(1, Math.min(Number(options.minimumScore) || 4, 20));
+    const ownerDocument = root instanceof Document ? root : root.ownerDocument || document;
+    const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    const suggestions = [];
+    let visited = 0;
+
+    while (walker.nextNode() && visited < maxElements) {
+      visited += 1;
+      const element = walker.currentNode;
+      if (!(element instanceof Element) || !isVisible(element)) continue;
+      const result = score(element);
+      if (result.score < minimumScore) continue;
+      suggestions.push({ element, score: result.score, reasons: result.reasons });
+    }
+
+    return suggestions
+      .sort((left, right) => right.score - left.score)
+      .slice(0, maxSuggestions);
+  }
+
+  Object.defineProperty(globalThis, detectorSymbol, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: Object.freeze({ boundaryFor, detect, isVisible, score })
+  });
+})();
+
+// Source: src/mutation-risk-observer.js
+(() => {
+  "use strict";
+
+  const observerSymbol = Symbol.for("search-translate-guard.mutation-risk-observer");
+  if (globalThis[observerSymbol]) return;
+
+  const detector = globalThis[Symbol.for("search-translate-guard.risk-detector")];
+  if (!detector?.boundaryFor || !detector?.isVisible || !detector?.score) {
+    throw new Error("Risk detector must load before mutation risk observation");
+  }
+
+  const maxCandidates = 24;
+  const candidateTtlMs = 15 * 60 * 1_000;
+  const observations = new Map();
+  let enabled = false;
+
+  function containsTextNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) return true;
+    if (!(node instanceof Element)) return false;
+    const walker = document.createTreeWalker(
+      node,
+      NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
+    );
+    for (let visited = 0; visited < 200 && walker.nextNode(); visited += 1) {
+      if (walker.currentNode.nodeType === Node.TEXT_NODE) return true;
+    }
+    return false;
+  }
+
+  function someNode(nodes, predicate) {
+    const limit = Math.min(nodes.length, 100);
+    for (let index = 0; index < limit; index += 1) {
+      if (predicate(nodes[index])) return true;
+    }
+    return false;
+  }
+
+  function rewriteEvidence(record) {
+    return {
+      removedText: someNode(
+        record.removedNodes,
+        (node) => node.nodeType === Node.TEXT_NODE
+      ),
+      addedWrapper: someNode(record.addedNodes, (node) => (
+        node instanceof Element && containsTextNode(node)
+      ))
+    };
+  }
+
+  function isInteractiveBoundary(element) {
+    return element.localName.includes("-") || element.matches([
+      "button", "input", "textarea", "select", "dialog", "[contenteditable]",
+      "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]",
+      "[role=tree]", "[role=grid]", "[role=tablist]", "[role=textbox]", "[popover]"
+    ].join(","));
+  }
+
+  function prune(now = Date.now()) {
+    for (const [element, observation] of observations) {
+      if (!element.isConnected || now - observation.observedAt > candidateTtlMs) {
+        observations.delete(element);
+      }
+    }
+  }
+
+  function remember(element) {
+    if (
+      !(element instanceof Element) ||
+      !isInteractiveBoundary(element) ||
+      !detector.isVisible(element)
+    ) return;
+    if (element.closest('[translate="no"], .notranslate')) return;
+
+    const structural = detector.score(element);
+    const previous = observations.get(element);
+    const observation = {
+      element,
+      score: Math.min(20, Math.max(8, structural.score + 6) + Math.min(previous?.occurrences || 0, 3)),
+      reasons: [...new Set(["observed-text-rewrite", ...structural.reasons])],
+      observedAt: Date.now(),
+      occurrences: Math.min((previous?.occurrences || 0) + 1, 4)
+    };
+    observations.set(element, observation);
+    prune(observation.observedAt);
+
+    if (observations.size > maxCandidates) {
+      const oldest = [...observations.values()]
+        .sort((left, right) => left.observedAt - right.observedAt)[0];
+      if (oldest) observations.delete(oldest.element);
+    }
+  }
+
+  function process(records) {
+    if (document.visibilityState === "hidden") return;
+    const byTarget = new Map();
+    for (const record of records.slice(0, 200)) {
+      if (record.type !== "childList") continue;
+      const evidence = rewriteEvidence(record);
+      if (!evidence.removedText && !evidence.addedWrapper) continue;
+      const previous = byTarget.get(record.target) || {
+        removedText: false,
+        addedWrapper: false
+      };
+      previous.removedText ||= evidence.removedText;
+      previous.addedWrapper ||= evidence.addedWrapper;
+      byTarget.set(record.target, previous);
+    }
+    for (const [mutationTarget, evidence] of byTarget) {
+      if (!evidence.removedText || !evidence.addedWrapper) continue;
+      const target = mutationTarget instanceof Element
+        ? mutationTarget
+        : mutationTarget.parentElement;
+      const boundary = detector.boundaryFor(target);
+      if (boundary) remember(boundary);
+    }
+  }
+
+  function candidates() {
+    if (!enabled) return [];
+    prune();
+    return [...observations.values()]
+      .sort((left, right) => right.score - left.score || right.observedAt - left.observedAt)
+      .map(({ element, score, reasons, observedAt, occurrences }) => ({
+        element,
+        score,
+        reasons: [...reasons],
+        observedAt,
+        occurrences
+      }));
+  }
+
+  const observer = new MutationObserver(process);
+
+  function setEnabled(value) {
+    const next = Boolean(value);
+    if (enabled === next) return;
+    enabled = next;
+    if (enabled) {
+      observer.observe(document, { childList: true, subtree: true });
+    } else {
+      observer.disconnect();
+      observations.clear();
+    }
+  }
+
+  setEnabled(true);
+
+  Object.defineProperty(globalThis, observerSymbol, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: Object.freeze({
+      candidates,
+      count: () => candidates().length,
+      setEnabled
+    })
+  });
+})();
+
 // Source: src/selector-tools.js
 (() => {
   "use strict";
@@ -371,6 +679,7 @@
 
   const runtime = globalThis[Symbol.for("search-translate-guard.runtime")];
   const selectorTools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
+  const mutationRisks = globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")];
   if (!runtime || !selectorTools) {
     throw new Error("Search Translate Guard core and selector tools must load before site rules");
   }
@@ -545,8 +854,10 @@
   }
 
   function healthSnapshot() {
+    const observedRiskCount = Number(mutationRisks?.count?.()) || 0;
     return {
       origin,
+      observedRiskCount: Math.max(0, Math.min(observedRiskCount, 24)),
       rules: rules.map((rule) => ({ id: rule.id, state: ruleHealth(rule) }))
     };
   }
@@ -643,13 +954,18 @@
     for (const element of selectTargets(document)) runtime.protect(element);
   }
 
+  function updateSite(enabled, value) {
+    mutationRisks?.setEnabled?.(Boolean(enabled));
+    updateRules(enabled ? value : []);
+  }
+
   async function reload() {
     const stored = await chrome.storage.local.get(storageKey);
     const site = stored[storageKey]?.sites?.[origin];
-    updateRules(site?.enabled ? site.rules : []);
+    updateSite(Boolean(site?.enabled), site?.rules);
   }
 
-  const state = Object.freeze({ healthSnapshot, reload, updateRules });
+  const state = Object.freeze({ healthSnapshot, reload, updateRules, updateSite });
   Object.defineProperty(globalThis, stateSymbol, {
     configurable: false,
     enumerable: false,
@@ -683,7 +999,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "site-guard:rules-updated" && message.origin === origin) {
-      updateRules(message.rules);
+      updateSite(message.enabled !== false, message.rules);
       return false;
     }
     if (message?.type === "site-guard:get-rule-health" && message.origin === origin) {
@@ -691,6 +1007,10 @@
       return false;
     }
     return false;
+  });
+
+  chrome.storage.onChanged?.addListener((changes, areaName) => {
+    if (areaName === "local" && changes?.[storageKey]) void reload();
   });
 
   void reload();

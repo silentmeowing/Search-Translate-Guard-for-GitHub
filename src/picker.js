@@ -4,8 +4,12 @@
   const pickerSymbol = Symbol.for("search-translate-guard.component-picker");
   const requestSymbol = Symbol.for("search-translate-guard.component-picker-request");
   const detectorSymbol = Symbol.for("search-translate-guard.risk-detector");
+  const mutationObserverSymbol = Symbol.for("search-translate-guard.mutation-risk-observer");
+  const detector = globalThis[detectorSymbol];
   const selectorTools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
-  if (!selectorTools) throw new Error("Selector tools must load before the component picker");
+  if (!selectorTools || !detector?.boundaryFor) {
+    throw new Error("Risk detector and selector tools must load before the component picker");
+  }
   globalThis[pickerSymbol]?.cancel();
   const request = globalThis[requestSymbol];
   delete globalThis[requestSymbol];
@@ -98,26 +102,7 @@
   let finished = false;
 
   function chooseBoundary(target) {
-    if (!(target instanceof Element)) return null;
-    if ([document.body, document.documentElement].includes(target)) return null;
-    const semantic = target.closest([
-      "input", "textarea", "select", "button", "[contenteditable=true]",
-      "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]",
-      "[role=tree]", "[role=grid]", "[role=tablist]", "[role=textbox]"
-    ].join(",")) || target;
-
-    let candidate = semantic;
-    let ancestor = semantic.parentElement;
-    for (let depth = 0; ancestor && depth < 3; depth += 1, ancestor = ancestor.parentElement) {
-      if (
-        ancestor.localName.includes("-") ||
-        ancestor.matches("[role=combobox], [role=listbox], [role=dialog], [role=menu], [role=tree], [role=grid], [role=tablist]")
-      ) {
-        candidate = ancestor;
-        break;
-      }
-    }
-    return [document.body, document.documentElement].includes(candidate) ? null : candidate;
+    return detector.boundaryFor(target);
   }
 
   function positionHighlight(element) {
@@ -135,11 +120,18 @@
     highlight.hidden = false;
   }
 
-  function suggestedStatus(index, total, score) {
+  function suggestedStatus(index, total, suggestion) {
+    if (suggestion.observed) {
+      return message(
+        "pickerObservedSuggestion",
+        `Recent DOM text rewriting was observed in component ${index} of ${total} (score ${suggestion.score}). Confirm it or inspect another candidate.`,
+        [String(index), String(total), String(suggestion.score)]
+      );
+    }
     return message(
       "pickerSuggested",
-      `Suggested high-risk component ${index} of ${total} (score ${score}). Confirm it or inspect another candidate.`,
-      [String(index), String(total), String(score)]
+      `Suggested high-risk component ${index} of ${total} (score ${suggestion.score}). Confirm it or inspect another candidate.`,
+      [String(index), String(total), String(suggestion.score)]
     );
   }
 
@@ -147,7 +139,7 @@
     selected = element;
     selector = selectorTools.selectorFor(element);
     status.textContent = suggestion
-      ? suggestedStatus(suggestionIndex + 1, suggestions.length, suggestion.score)
+      ? suggestedStatus(suggestionIndex + 1, suggestions.length, suggestion)
       : text.selected;
     selectorDisplay.textContent = selector;
     selectorDisplay.hidden = false;
@@ -172,20 +164,34 @@
   }
 
   function loadSuggestions() {
-    const detector = globalThis[detectorSymbol];
     if (!detector?.detect || !detector?.score) return;
 
     const byBoundary = new Map();
-    for (const detected of detector.detect(document)) {
+    const include = (detected, observed = false) => {
       const boundary = chooseBoundary(detected.element);
-      if (!boundary || boundary === host) continue;
+      if (!boundary || boundary === host) return;
       const boundaryRisk = detector.score(boundary);
       const score = Math.max(detected.score, boundaryRisk.score);
-      const reasons = [...new Set([...detected.reasons, ...boundaryRisk.reasons])];
       const previous = byBoundary.get(boundary);
-      if (!previous || score > previous.score) {
-        byBoundary.set(boundary, { element: boundary, score, reasons });
-      }
+      const reasons = [...new Set([
+        ...(previous?.reasons || []),
+        ...detected.reasons,
+        ...boundaryRisk.reasons
+      ])];
+      byBoundary.set(boundary, {
+        element: boundary,
+        score: Math.max(previous?.score || 0, score),
+        reasons,
+        observed: Boolean(previous?.observed || observed)
+      });
+    };
+
+    for (const detected of detector.detect(document)) {
+      include(detected);
+    }
+    const mutationRisks = globalThis[mutationObserverSymbol];
+    for (const observed of mutationRisks?.candidates?.() || []) {
+      include(observed, true);
     }
 
     suggestions = [...byBoundary.values()]

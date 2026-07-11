@@ -19,6 +19,7 @@ p { margin: 8px 0; }
 .origin { color: #57606a; font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 .status { font-weight: 600; }
 .built-in { padding: 8px; border-radius: 6px; color: #0550ae; background: #ddf4ff; }
+.observed { padding: 8px; border-radius: 6px; color: #7d4e00; background: #fff8c5; font-size: 12px; }
 .summary, .hint { color: #57606a; font-size: 12px; }
 .error { padding: 8px; border-radius: 6px; color: #cf222e; background: #ffebe9; }
 .rule-health { margin-top: 14px; padding-top: 12px; border-top: 1px solid #d8dee4; }
@@ -42,6 +43,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .rule-health, .rule-item { border-color: #30363d; }
   .rule-state:not([data-state="healthy"]) { color: #d29922; }
   .built-in { color: #79c0ff; background: #0c2d6b; }
+  .observed { color: #e3b341; background: #3b2e00; }
   .error { color: #ff7b72; background: #490202; }
   button { color: #f0f6fc; background: #21262d; border-color: #30363d; }
   button.danger { color: #ff7b72; }

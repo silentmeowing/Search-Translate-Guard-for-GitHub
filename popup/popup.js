@@ -5,6 +5,7 @@ const elements = {
   status: document.querySelector("#status"),
   builtIn: document.querySelector("#built-in"),
   summary: document.querySelector("#summary"),
+  observed: document.querySelector("#observed"),
   error: document.querySelector("#error"),
   ruleHealth: document.querySelector("#rule-health"),
   healthSummary: document.querySelector("#health-summary"),
@@ -191,6 +192,17 @@ async function refresh() {
     [String(status.ruleCount)],
     `${status.ruleCount} protected component rule(s)`
   );
+  const observedRiskCount = Number.isInteger(status.observedRiskCount)
+    ? Math.max(0, status.observedRiskCount)
+    : 0;
+  elements.observed.hidden = !status.enabled || observedRiskCount === 0;
+  elements.observed.textContent = observedRiskCount
+    ? message(
+      "siteGuardObservedRisks",
+      [String(observedRiskCount)],
+      `${observedRiskCount} recent risky DOM rewrite(s) were observed. Review suggested components.`
+    )
+    : "";
   elements.enable.hidden = status.enabled;
   elements.select.hidden = !status.enabled;
   elements.clear.hidden = !status.enabled || status.ruleCount === 0;

@@ -3,6 +3,7 @@
 
   const runtime = globalThis[Symbol.for("search-translate-guard.runtime")];
   const selectorTools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
+  const mutationRisks = globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")];
   if (!runtime || !selectorTools) {
     throw new Error("Search Translate Guard core and selector tools must load before site rules");
   }
@@ -177,8 +178,10 @@
   }
 
   function healthSnapshot() {
+    const observedRiskCount = Number(mutationRisks?.count?.()) || 0;
     return {
       origin,
+      observedRiskCount: Math.max(0, Math.min(observedRiskCount, 24)),
       rules: rules.map((rule) => ({ id: rule.id, state: ruleHealth(rule) }))
     };
   }
@@ -275,13 +278,18 @@
     for (const element of selectTargets(document)) runtime.protect(element);
   }
 
+  function updateSite(enabled, value) {
+    mutationRisks?.setEnabled?.(Boolean(enabled));
+    updateRules(enabled ? value : []);
+  }
+
   async function reload() {
     const stored = await chrome.storage.local.get(storageKey);
     const site = stored[storageKey]?.sites?.[origin];
-    updateRules(site?.enabled ? site.rules : []);
+    updateSite(Boolean(site?.enabled), site?.rules);
   }
 
-  const state = Object.freeze({ healthSnapshot, reload, updateRules });
+  const state = Object.freeze({ healthSnapshot, reload, updateRules, updateSite });
   Object.defineProperty(globalThis, stateSymbol, {
     configurable: false,
     enumerable: false,
@@ -315,7 +323,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "site-guard:rules-updated" && message.origin === origin) {
-      updateRules(message.rules);
+      updateSite(message.enabled !== false, message.rules);
       return false;
     }
     if (message?.type === "site-guard:get-rule-health" && message.origin === origin) {
@@ -323,6 +331,10 @@
       return false;
     }
     return false;
+  });
+
+  chrome.storage.onChanged?.addListener((changes, areaName) => {
+    if (areaName === "local" && changes?.[storageKey]) void reload();
   });
 
   void reload();
