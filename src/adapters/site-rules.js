@@ -2,10 +2,11 @@
   "use strict";
 
   const runtime = globalThis[Symbol.for("search-translate-guard.runtime")];
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
   const selectorTools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
   const mutationRisks = globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")];
-  if (!runtime || !selectorTools) {
-    throw new Error("Search Translate Guard core and selector tools must load before site rules");
+  if (!runtime || !composedTree?.observe || !composedTree?.refresh || !selectorTools) {
+    throw new Error("Search Translate Guard core, composed tree, and selector tools must load before site rules");
   }
 
   const storageKey = "siteGuardConfig";
@@ -60,7 +61,10 @@
   }
 
   function restoreProtectedElements() {
-    document.querySelectorAll('[data-search-translate-guard-rule="true"]').forEach((element) => {
+    selectorTools.querySelectorAllOpen(
+      document,
+      '[data-search-translate-guard-rule="true"]'
+    ).forEach((element) => {
       const previous = previousState.get(element);
       if (!previous) return;
 
@@ -77,7 +81,7 @@
 
   function queryRule(rule) {
     try {
-      return [...document.querySelectorAll(rule.selector)];
+      return selectorTools.querySelectorAll(document, rule.selector);
     } catch {
       return [];
     }
@@ -85,7 +89,7 @@
 
   function isSelectorValid(rule) {
     try {
-      document.querySelector(rule.selector);
+      selectorTools.querySelectorAll(document, rule.selector, 1);
       return true;
     } catch {
       return false;
@@ -178,6 +182,7 @@
   }
 
   function healthSnapshot() {
+    applyCurrentRules();
     const observedRiskCount = Number(mutationRisks?.count?.()) || 0;
     return {
       origin,
@@ -192,6 +197,7 @@
       scheduleReconcile();
       return;
     }
+    composedTree.refresh(document);
 
     for (const rule of rules) {
       if (!selectorTools.isRebindableFingerprint(rule.fingerprint)) continue;
@@ -245,7 +251,8 @@
       const rebindable = selectorTools.isRebindableFingerprint(rule.fingerprint);
       let localMatches;
       try {
-        localMatches = runtime.selectWithin(root, rule.selector);
+        const queryRoot = selectorTools.isDeepSelector(rule.selector) ? document : root;
+        localMatches = selectorTools.querySelectorAll(queryRoot, rule.selector);
       } catch {
         continue;
       }
@@ -265,6 +272,11 @@
     return [...new Set(targets)];
   }
 
+  function applyCurrentRules() {
+    composedTree.refresh(document);
+    for (const element of selectTargets(document)) runtime.protect(element);
+  }
+
   function updateRules(value) {
     if (reconcileTimer !== null) {
       clearTimeout(reconcileTimer);
@@ -275,7 +287,7 @@
     rebindCandidates.clear();
     rebindNotifications.clear();
     rebindRetryCounts.clear();
-    for (const element of selectTargets(document)) runtime.protect(element);
+    applyCurrentRules();
   }
 
   function updateSite(enabled, value) {
@@ -304,14 +316,7 @@
   });
   runtime.start();
 
-  new MutationObserver((records) => {
-    if (!rules.some((rule) => selectorTools.isRebindableFingerprint(rule.fingerprint))) return;
-    if (records.some((record) => (
-      record.type === "attributes" || record.removedNodes.length > 0
-    ))) {
-      scheduleReconcile();
-    }
-  }).observe(document, {
+  const driftObserverOptions = {
     attributes: true,
     attributeFilter: [
       "id", "class", "role", "type", "name",
@@ -319,7 +324,28 @@
     ],
     childList: true,
     subtree: true
+  };
+  const driftObserver = new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes || []) {
+        composedTree.observe(driftObserver, node, driftObserverOptions, 1_000);
+      }
+    }
+    if (!rules.some((rule) => selectorTools.isRebindableFingerprint(rule.fingerprint))) return;
+    if (records.some((record) => (
+      record.type === "attributes" || record.removedNodes.length > 0
+    ))) {
+      scheduleReconcile();
+    }
   });
+  composedTree.observe(driftObserver, document, driftObserverOptions);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", applyCurrentRules, {
+      once: true
+    });
+  } else {
+    applyCurrentRules();
+  }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "site-guard:rules-updated" && message.origin === origin) {

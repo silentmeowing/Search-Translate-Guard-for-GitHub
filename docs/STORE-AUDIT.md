@@ -8,7 +8,7 @@ Audit date: July 11, 2026
 |---|---|---|
 | `manifest_version` | `3` | Pass |
 | `name` | localized `__MSG_extensionName__` | Pass |
-| `version` | `2.6.0` | Pass |
+| `version` | `2.7.0` | Pass |
 | `description` | localized `__MSG_extensionDescription__` | Pass |
 | `default_locale` | `en` | Pass |
 | Locales | `en`, `zh_CN` | Pass |
@@ -31,6 +31,7 @@ Audit date: July 11, 2026
 - No developer-side collection, sale, sharing, or transmission of user data.
 - Local structural risk candidates are computed only when the authorized-site picker opens and are not persisted or transmitted.
 - Recent DOM rewrite signals on authorized sites are bounded, structural, expire in memory, and expose only a count to the popup.
+- Open Shadow DOM traversal is packaged, bounded, and activated only on authorized sites; closed roots are not accessed.
 - Local storage contains only enabled origins, user-confirmed, explicitly repaired, or conservatively rebound structural selectors, non-text fingerprints, and rule timestamps; it never contains structural or observed candidate scores, runtime health snapshots, field values, or visible page text.
 - Search scope and query are processed locally; submission navigates directly to GitHub.
 - Original icon; no GitHub, Microsoft, or Edge logo.

@@ -7,6 +7,7 @@
   "use strict";
 
   const runtimeSymbol = Symbol.for("search-translate-guard.runtime");
+  const composedTreeSymbol = Symbol.for("search-translate-guard.composed-tree");
   if (globalThis[runtimeSymbol]) return;
 
   /**
@@ -57,6 +58,8 @@
   }
 
   function selectWithin(root, selector) {
+    const composedTree = globalThis[composedTreeSymbol];
+    if (composedTree?.queryAll) return composedTree.queryAll(root, selector);
     const matches = [];
     if (root instanceof Element && root.matches(selector)) matches.push(root);
     root?.querySelectorAll?.(selector).forEach((element) => matches.push(element));
@@ -174,11 +177,19 @@
     if (started) return;
     started = true;
 
-    new MutationObserver((records) => {
+    const options = { childList: true, subtree: true };
+    const observer = new MutationObserver((records) => {
+      const composedTree = globalThis[composedTreeSymbol];
       for (const record of records) {
-        for (const node of record.addedNodes) scanAll(node);
+        for (const node of record.addedNodes) {
+          composedTree?.observe?.(observer, node, options);
+          scanAll(node);
+        }
       }
-    }).observe(document, { childList: true, subtree: true });
+    });
+    const composedTree = globalThis[composedTreeSymbol];
+    if (composedTree?.observe) composedTree.observe(observer, document, options);
+    else observer.observe(document, options);
 
     for (const adapter of adapters) activateAdapter(adapter);
   }
@@ -191,12 +202,253 @@
   });
 })();
 
+// Source: src/composed-tree.js
+(() => {
+  "use strict";
+
+  const treeSymbol = Symbol.for("search-translate-guard.composed-tree");
+  if (globalThis[treeSymbol]) return;
+
+  const deepSeparator = " >>> ";
+  const maxShadowDepth = 8;
+  const maxQueryResults = 5_000;
+  const observedRoots = new WeakMap();
+  const observerRegistrations = new Map();
+
+  function isQueryableRoot(value) {
+    return value instanceof Document ||
+      value instanceof DocumentFragment ||
+      value instanceof Element;
+  }
+
+  function parentElement(element) {
+    if (!(element instanceof Element)) return null;
+    if (element.parentElement) return element.parentElement;
+    const root = element.getRootNode();
+    return root instanceof ShadowRoot ? root.host : null;
+  }
+
+  function closest(element, selector, limit = 32) {
+    let current = element instanceof Element ? element : null;
+    for (let depth = 0; current && depth < limit; depth += 1) {
+      if (current.matches(selector)) return current;
+      current = parentElement(current);
+    }
+    return null;
+  }
+
+  function startingElements(root) {
+    if (root instanceof Element) return [root];
+    if (root instanceof Document) return root.documentElement ? [root.documentElement] : [];
+    return [...root.children];
+  }
+
+  function pushChildren(stack, element) {
+    const lightChildren = [...element.children];
+    for (let index = lightChildren.length - 1; index >= 0; index -= 1) {
+      stack.push(lightChildren[index]);
+    }
+    const shadowChildren = element.shadowRoot ? [...element.shadowRoot.children] : [];
+    for (let index = shadowChildren.length - 1; index >= 0; index -= 1) {
+      stack.push(shadowChildren[index]);
+    }
+  }
+
+  function scopes(root = document, maxElements = 5_000) {
+    if (!isQueryableRoot(root)) return [];
+    const acceptedLimit = Math.max(1, Math.min(Number(maxElements) || 5_000, 10_000));
+    const result = [root];
+    const seen = new WeakSet([root]);
+    const stack = startingElements(root).reverse();
+    let visited = 0;
+
+    while (stack.length && visited < acceptedLimit) {
+      const element = stack.pop();
+      visited += 1;
+      const shadowRoot = element.shadowRoot;
+      if (shadowRoot instanceof ShadowRoot && !seen.has(shadowRoot)) {
+        seen.add(shadowRoot);
+        result.push(shadowRoot);
+      }
+      pushChildren(stack, element);
+    }
+    return result;
+  }
+
+  function elements(root = document, limit = 5_000) {
+    const acceptedLimit = Math.max(1, Math.min(Number(limit) || 5_000, 10_000));
+    const result = [];
+    if (!isQueryableRoot(root)) return result;
+    const stack = startingElements(root).reverse();
+    while (stack.length && result.length < acceptedLimit) {
+      const element = stack.pop();
+      result.push(element);
+      pushChildren(stack, element);
+    }
+    return result;
+  }
+
+  function selectorSegments(selector) {
+    if (typeof selector !== "string") throw new TypeError("Selector must be a string");
+    const segments = [];
+    let start = 0;
+    let quote = "";
+    let escaped = false;
+    let bracketDepth = 0;
+    let parenthesisDepth = 0;
+    for (let index = 0; index < selector.length; index += 1) {
+      const character = selector[index];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (character === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        if (character === quote) quote = "";
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        continue;
+      }
+      if (character === "[") bracketDepth += 1;
+      else if (character === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+      else if (character === "(") parenthesisDepth += 1;
+      else if (character === ")") parenthesisDepth = Math.max(0, parenthesisDepth - 1);
+      else if (
+        character === ">" && selector.slice(index, index + 3) === ">>>" &&
+        bracketDepth === 0 && parenthesisDepth === 0
+      ) {
+        segments.push(selector.slice(start, index).trim());
+        start = index + 3;
+        index += 2;
+      }
+    }
+    segments.push(selector.slice(start).trim());
+    if (!segments.length || segments.length > maxShadowDepth || segments.some((segment) => !segment)) {
+      throw new SyntaxError("Invalid open shadow selector path");
+    }
+    const probe = document.createDocumentFragment();
+    for (const segment of segments) probe.querySelector(segment);
+    return segments;
+  }
+
+  function matchesWithin(root, selector) {
+    const matches = [];
+    if (root instanceof Element && root.matches(selector)) matches.push(root);
+    root.querySelectorAll(selector).forEach((element) => matches.push(element));
+    return matches;
+  }
+
+  function queryAll(root, selector, limit = Number.POSITIVE_INFINITY) {
+    if (!isQueryableRoot(root)) return [];
+    const segments = selectorSegments(selector);
+    const acceptedLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(Number(limit) || 1, maxQueryResults))
+      : maxQueryResults;
+    let searchRoots = [root];
+
+    for (let index = 0; index < segments.length; index += 1) {
+      const matches = [];
+      for (const searchRoot of searchRoots) {
+        for (const element of matchesWithin(searchRoot, segments[index])) {
+          matches.push(element);
+          if (index === segments.length - 1 && matches.length >= acceptedLimit) return matches;
+          if (matches.length >= maxQueryResults) break;
+        }
+        if (matches.length >= maxQueryResults) break;
+      }
+      if (index === segments.length - 1) return matches;
+      searchRoots = matches
+        .map((element) => element.shadowRoot)
+        .filter((shadowRoot) => shadowRoot instanceof ShadowRoot);
+      if (!searchRoots.length) return [];
+    }
+    return [];
+  }
+
+  function queryAllOpen(root, selector, limit = Number.POSITIVE_INFINITY) {
+    if (!isQueryableRoot(root)) return [];
+    const segments = selectorSegments(selector);
+    if (segments.length > 1) return queryAll(root, selector, limit);
+    const acceptedLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(Number(limit) || 1, maxQueryResults))
+      : maxQueryResults;
+    const matches = [];
+    for (const scope of scopes(root)) {
+      for (const element of matchesWithin(scope, selector)) {
+        matches.push(element);
+        if (matches.length >= acceptedLimit) return matches;
+      }
+    }
+    return matches;
+  }
+
+  function observe(observer, root, options, maxElements = 5_000) {
+    if (!(observer instanceof MutationObserver) || !isQueryableRoot(root)) return;
+    const previous = observerRegistrations.get(observer);
+    observerRegistrations.set(observer, {
+      options,
+      maxElements: Math.max(previous?.maxElements || 0, maxElements)
+    });
+    let seen = observedRoots.get(observer);
+    if (!seen) {
+      seen = new WeakSet();
+      observedRoots.set(observer, seen);
+    }
+    for (const scope of scopes(root, maxElements)) {
+      if (scope instanceof Element || seen.has(scope)) continue;
+      observer.observe(scope, options);
+      seen.add(scope);
+    }
+  }
+
+  function refresh(root = document) {
+    for (const [observer, registration] of observerRegistrations) {
+      observe(observer, root, registration.options, registration.maxElements);
+    }
+  }
+
+  function disconnect(observer) {
+    observer?.disconnect?.();
+    if (observer) {
+      observedRoots.delete(observer);
+      observerRegistrations.delete(observer);
+    }
+  }
+
+  Object.defineProperty(globalThis, treeSymbol, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: Object.freeze({
+      closest,
+      deepSeparator,
+      disconnect,
+      elements,
+      observe,
+      parentElement,
+      queryAll,
+      queryAllOpen,
+      refresh,
+      selectorSegments
+    })
+  });
+})();
+
 // Source: src/risk-detector.js
 (() => {
   "use strict";
 
   const detectorSymbol = Symbol.for("search-translate-guard.risk-detector");
   if (globalThis[detectorSymbol]) return;
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
+  if (!composedTree?.closest || !composedTree?.elements || !composedTree?.parentElement) {
+    throw new Error("Composed tree support must load before risk detection");
+  }
 
   const compositeRoles = new Set([
     "combobox", "listbox", "menu", "tree", "grid", "tablist"
@@ -229,15 +481,19 @@
   function boundaryFor(target) {
     if (!(target instanceof Element)) return null;
     if ([document.body, document.documentElement].includes(target)) return null;
-    const semantic = target.closest([
+    const semantic = composedTree.closest(target, [
       "input", "textarea", "select", "button", "[contenteditable=true]",
       "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]",
       "[role=tree]", "[role=grid]", "[role=tablist]", "[role=textbox]"
     ].join(",")) || target;
 
     let candidate = semantic;
-    let ancestor = semantic.parentElement;
-    for (let depth = 0; ancestor && depth < 3; depth += 1, ancestor = ancestor.parentElement) {
+    let ancestor = composedTree.parentElement(semantic);
+    for (
+      let depth = 0;
+      ancestor && depth < 3;
+      depth += 1, ancestor = composedTree.parentElement(ancestor)
+    ) {
       if (
         ancestor.localName.includes("-") ||
         ancestor.matches("[role=combobox], [role=listbox], [role=dialog], [role=menu], [role=tree], [role=grid], [role=tablist]")
@@ -263,10 +519,11 @@
     const role = element.getAttribute("role")?.toLowerCase() || "";
     if (tag.includes("-")) {
       addSignal(result, "custom-element", 2);
-      if (element.querySelector([
+      const descendants = composedTree.queryAllOpen(element, [
         "input", "textarea", "select", "button", "[contenteditable]",
         "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]"
-      ].join(","))) {
+      ].join(","), 2);
+      if (descendants.some((candidate) => candidate !== element)) {
         addSignal(result, "interactive-descendant", 2);
       }
     }
@@ -312,14 +569,8 @@
     const maxElements = Math.max(1, Math.min(Number(options.maxElements) || 3000, 5000));
     const maxSuggestions = Math.max(1, Math.min(Number(options.maxSuggestions) || 24, 50));
     const minimumScore = Math.max(1, Math.min(Number(options.minimumScore) || 4, 20));
-    const ownerDocument = root instanceof Document ? root : root.ownerDocument || document;
-    const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     const suggestions = [];
-    let visited = 0;
-
-    while (walker.nextNode() && visited < maxElements) {
-      visited += 1;
-      const element = walker.currentNode;
+    for (const element of composedTree.elements(root, maxElements)) {
       if (!(element instanceof Element) || !isVisible(element)) continue;
       const result = score(element);
       if (result.score < minimumScore) continue;
@@ -346,14 +597,19 @@
   const observerSymbol = Symbol.for("search-translate-guard.mutation-risk-observer");
   if (globalThis[observerSymbol]) return;
 
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
   const detector = globalThis[Symbol.for("search-translate-guard.risk-detector")];
-  if (!detector?.boundaryFor || !detector?.isVisible || !detector?.score) {
-    throw new Error("Risk detector must load before mutation risk observation");
+  if (
+    !composedTree?.disconnect || !composedTree?.observe ||
+    !detector?.boundaryFor || !detector?.isVisible || !detector?.score
+  ) {
+    throw new Error("Composed tree support and risk detection must load before mutation observation");
   }
 
   const maxCandidates = 24;
   const candidateTtlMs = 15 * 60 * 1_000;
   const observations = new Map();
+  const observerOptions = { childList: true, subtree: true };
   let enabled = false;
 
   function containsTextNode(node) {
@@ -437,6 +693,9 @@
     const byTarget = new Map();
     for (const record of records.slice(0, 200)) {
       if (record.type !== "childList") continue;
+      for (const node of [...record.addedNodes].slice(0, 100)) {
+        composedTree.observe(observer, node, observerOptions, 1_000);
+      }
       const evidence = rewriteEvidence(record);
       if (!evidence.removedText && !evidence.addedWrapper) continue;
       const previous = byTarget.get(record.target) || {
@@ -451,7 +710,9 @@
       if (!evidence.removedText || !evidence.addedWrapper) continue;
       const target = mutationTarget instanceof Element
         ? mutationTarget
-        : mutationTarget.parentElement;
+        : mutationTarget instanceof ShadowRoot
+          ? mutationTarget.host
+          : mutationTarget.parentElement;
       const boundary = detector.boundaryFor(target);
       if (boundary) remember(boundary);
     }
@@ -459,6 +720,7 @@
 
   function candidates() {
     if (!enabled) return [];
+    composedTree.refresh(document);
     prune();
     return [...observations.values()]
       .sort((left, right) => right.score - left.score || right.observedAt - left.observedAt)
@@ -478,14 +740,12 @@
     if (enabled === next) return;
     enabled = next;
     if (enabled) {
-      observer.observe(document, { childList: true, subtree: true });
+      composedTree.observe(observer, document, observerOptions);
     } else {
-      observer.disconnect();
+      composedTree.disconnect(observer);
       observations.clear();
     }
   }
-
-  setEnabled(true);
 
   Object.defineProperty(globalThis, observerSymbol, {
     configurable: false,
@@ -505,6 +765,10 @@
 
   const toolsSymbol = Symbol.for("search-translate-guard.selector-tools");
   if (globalThis[toolsSymbol]) return;
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
+  if (!composedTree?.closest || !composedTree?.queryAll || !composedTree?.queryAllOpen) {
+    throw new Error("Composed tree support must load before selector tools");
+  }
 
   const fingerprintKeys = ["tag", "role", "type", "name", "landmark"];
 
@@ -518,26 +782,26 @@
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
-  function isUnique(candidate) {
+  function isUnique(root, candidate) {
     try {
-      return document.querySelectorAll(candidate).length === 1;
+      return root.querySelectorAll(candidate).length === 1;
     } catch {
       return false;
     }
   }
 
-  function stableSegment(element) {
+  function stableSegment(element, root) {
     const tag = element.localName;
     if (element.id) {
       const candidate = `#${escapeIdentifier(element.id)}`;
-      if (isUnique(candidate)) return { value: candidate, unique: true };
+      if (isUnique(root, candidate)) return { value: candidate, unique: true };
     }
 
     for (const name of ["data-testid", "data-test", "data-target", "data-component"]) {
       const value = element.getAttribute(name);
       if (!value || value.length > 120) continue;
       const candidate = `${tag}[${name}="${escapeAttribute(value)}"]`;
-      if (isUnique(candidate)) return { value: candidate, unique: true };
+      if (isUnique(root, candidate)) return { value: candidate, unique: true };
     }
 
     let value = tag;
@@ -560,25 +824,48 @@
       ? [...element.parentElement.children].filter((candidate) => candidate.localName === tag)
       : [];
     if (siblings.length > 1) value += `:nth-of-type(${siblings.indexOf(element) + 1})`;
-    return { value, unique: isUnique(value) };
+    return { value, unique: isUnique(root, value) };
   }
 
-  function selectorFor(element) {
-    if (!(element instanceof Element)) return "";
+  function selectorWithinRoot(element, root) {
     const parts = [];
     let current = element;
-    for (let depth = 0; current && current !== document.documentElement && depth < 6; depth += 1) {
-      const segment = stableSegment(current);
+    for (
+      let depth = 0;
+      current && current.getRootNode() === root && current !== document.documentElement && depth < 6;
+      depth += 1
+    ) {
+      const segment = stableSegment(current, root);
       parts.unshift(segment.value);
       const candidate = parts.join(" > ");
-      if (segment.unique || isUnique(candidate)) return candidate;
+      if (segment.unique || isUnique(root, candidate)) return candidate;
       current = current.parentElement;
     }
     return parts.join(" > ");
   }
 
+  function selectorFor(element) {
+    if (!(element instanceof Element)) return "";
+    const segments = [];
+    let current = element;
+    let reachedDocument = false;
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      const root = current.getRootNode();
+      if (!(root instanceof Document) && !(root instanceof ShadowRoot)) return "";
+      const selector = selectorWithinRoot(current, root);
+      if (!selector) return "";
+      segments.unshift(selector);
+      if (root instanceof Document) {
+        reachedDocument = true;
+        break;
+      }
+      current = root.host;
+    }
+    return reachedDocument ? segments.join(composedTree.deepSeparator) : "";
+  }
+
   function landmarkFor(element) {
-    const landmark = element.closest(
+    const landmark = composedTree.closest(element,
       "header, nav, main, form, [role=dialog], [role=main], [role=navigation]"
     );
     return landmark ? landmark.localName : "";
@@ -642,9 +929,9 @@
   function fingerprintMatches(root, fingerprint, limit = Number.POSITIVE_INFINITY) {
     if (!isRebindableFingerprint(fingerprint)) return [];
     const selector = candidateSelector(fingerprint);
-    if (!selector || !root?.querySelectorAll) return [];
+    if (!selector) return [];
     const matches = [];
-    for (const element of root.querySelectorAll(selector)) {
+    for (const element of composedTree.queryAllOpen(root, selector, 5_000)) {
       if (!matchesFingerprint(element, fingerprint)) continue;
       matches.push(element);
       if (matches.length >= limit) break;
@@ -664,9 +951,12 @@
     value: Object.freeze({
       fingerprintFor,
       fingerprintMatches,
+      isDeepSelector: (selector) => composedTree.selectorSegments(selector).length > 1,
       isRebindableFingerprint,
       matchesFingerprint,
       normalizedFingerprint,
+      querySelectorAll: composedTree.queryAll,
+      querySelectorAllOpen: composedTree.queryAllOpen,
       selectorFor,
       uniqueFingerprintMatch
     })
@@ -678,10 +968,11 @@
   "use strict";
 
   const runtime = globalThis[Symbol.for("search-translate-guard.runtime")];
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
   const selectorTools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
   const mutationRisks = globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")];
-  if (!runtime || !selectorTools) {
-    throw new Error("Search Translate Guard core and selector tools must load before site rules");
+  if (!runtime || !composedTree?.observe || !composedTree?.refresh || !selectorTools) {
+    throw new Error("Search Translate Guard core, composed tree, and selector tools must load before site rules");
   }
 
   const storageKey = "siteGuardConfig";
@@ -736,7 +1027,10 @@
   }
 
   function restoreProtectedElements() {
-    document.querySelectorAll('[data-search-translate-guard-rule="true"]').forEach((element) => {
+    selectorTools.querySelectorAllOpen(
+      document,
+      '[data-search-translate-guard-rule="true"]'
+    ).forEach((element) => {
       const previous = previousState.get(element);
       if (!previous) return;
 
@@ -753,7 +1047,7 @@
 
   function queryRule(rule) {
     try {
-      return [...document.querySelectorAll(rule.selector)];
+      return selectorTools.querySelectorAll(document, rule.selector);
     } catch {
       return [];
     }
@@ -761,7 +1055,7 @@
 
   function isSelectorValid(rule) {
     try {
-      document.querySelector(rule.selector);
+      selectorTools.querySelectorAll(document, rule.selector, 1);
       return true;
     } catch {
       return false;
@@ -854,6 +1148,7 @@
   }
 
   function healthSnapshot() {
+    applyCurrentRules();
     const observedRiskCount = Number(mutationRisks?.count?.()) || 0;
     return {
       origin,
@@ -868,6 +1163,7 @@
       scheduleReconcile();
       return;
     }
+    composedTree.refresh(document);
 
     for (const rule of rules) {
       if (!selectorTools.isRebindableFingerprint(rule.fingerprint)) continue;
@@ -921,7 +1217,8 @@
       const rebindable = selectorTools.isRebindableFingerprint(rule.fingerprint);
       let localMatches;
       try {
-        localMatches = runtime.selectWithin(root, rule.selector);
+        const queryRoot = selectorTools.isDeepSelector(rule.selector) ? document : root;
+        localMatches = selectorTools.querySelectorAll(queryRoot, rule.selector);
       } catch {
         continue;
       }
@@ -941,6 +1238,11 @@
     return [...new Set(targets)];
   }
 
+  function applyCurrentRules() {
+    composedTree.refresh(document);
+    for (const element of selectTargets(document)) runtime.protect(element);
+  }
+
   function updateRules(value) {
     if (reconcileTimer !== null) {
       clearTimeout(reconcileTimer);
@@ -951,7 +1253,7 @@
     rebindCandidates.clear();
     rebindNotifications.clear();
     rebindRetryCounts.clear();
-    for (const element of selectTargets(document)) runtime.protect(element);
+    applyCurrentRules();
   }
 
   function updateSite(enabled, value) {
@@ -980,14 +1282,7 @@
   });
   runtime.start();
 
-  new MutationObserver((records) => {
-    if (!rules.some((rule) => selectorTools.isRebindableFingerprint(rule.fingerprint))) return;
-    if (records.some((record) => (
-      record.type === "attributes" || record.removedNodes.length > 0
-    ))) {
-      scheduleReconcile();
-    }
-  }).observe(document, {
+  const driftObserverOptions = {
     attributes: true,
     attributeFilter: [
       "id", "class", "role", "type", "name",
@@ -995,7 +1290,28 @@
     ],
     childList: true,
     subtree: true
+  };
+  const driftObserver = new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes || []) {
+        composedTree.observe(driftObserver, node, driftObserverOptions, 1_000);
+      }
+    }
+    if (!rules.some((rule) => selectorTools.isRebindableFingerprint(rule.fingerprint))) return;
+    if (records.some((record) => (
+      record.type === "attributes" || record.removedNodes.length > 0
+    ))) {
+      scheduleReconcile();
+    }
   });
+  composedTree.observe(driftObserver, document, driftObserverOptions);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", applyCurrentRules, {
+      once: true
+    });
+  } else {
+    applyCurrentRules();
+  }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "site-guard:rules-updated" && message.origin === origin) {

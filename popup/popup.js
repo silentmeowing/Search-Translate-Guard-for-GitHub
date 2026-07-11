@@ -172,7 +172,12 @@ function renderRuleHealth(rules) {
 
 async function openPicker(ruleId = "") {
   await preparePickerRequest(ruleId);
-  await executeFiles(["src/risk-detector.js", "src/selector-tools.js", "src/picker.js"]);
+  await executeFiles([
+    "src/composed-tree.js",
+    "src/risk-detector.js",
+    "src/selector-tools.js",
+    "src/picker.js"
+  ]);
   globalThis.close();
 }
 

@@ -146,7 +146,7 @@ test.describe("site guard service worker", () => {
       const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
       expect(manifest).toMatchObject({
         manifest_version: 3,
-        version: "2.6.0",
+        version: "2.7.0",
         permissions: ["activeTab", "scripting", "storage"],
         optional_host_permissions: ["http://*/*", "https://*/*"]
       });
@@ -185,7 +185,7 @@ test.describe("site guard service worker", () => {
       type: "site-guard:add-rule",
       origin: "https://example.com",
       rule: {
-        selector: "main > custom-search[role=combobox]",
+        selector: "main > custom-shell >>> custom-search[role=combobox]",
         fingerprint: {
           tag: "custom-search",
           role: "combobox",
@@ -200,7 +200,7 @@ test.describe("site guard service worker", () => {
     expect(response.ok).toBe(true);
     expect(response.result.ruleCount).toBe(1);
     const storedRule = harness.storage.siteGuardConfig.sites["https://example.com"].rules[0];
-    expect(storedRule.selector).toBe("main > custom-search[role=combobox]");
+    expect(storedRule.selector).toBe("main > custom-shell >>> custom-search[role=combobox]");
     expect(storedRule.fingerprint).toEqual({ tag: "custom-search", role: "combobox" });
     expect(JSON.stringify(storedRule)).not.toContain("private visible page text");
     expect(harness.tabMessages.find(({ tabId }) => tabId === 42)).toMatchObject({

@@ -13,6 +13,7 @@ const siteGeneratedSource = fs.readFileSync(
   path.join(root, "Site-Translate-Guard.content.js"),
   "utf8"
 );
+const composedTreeSource = fs.readFileSync(path.join(root, "src/composed-tree.js"), "utf8");
 const riskDetectorSource = fs.readFileSync(path.join(root, "src/risk-detector.js"), "utf8");
 const selectorToolsSource = fs.readFileSync(path.join(root, "src/selector-tools.js"), "utf8");
 const pickerSource = fs.readFileSync(path.join(root, "src/picker.js"), "utf8");
@@ -175,6 +176,13 @@ test.describe("generic guard core", () => {
     expect(await page.evaluate(() => globalThis.fixtureError)).toContain("NotFoundError");
   });
 
+  test("the unprotected open-shadow fixture reproduces a translation DOM mismatch", async ({ page }) => {
+    await page.goto(fixtureUrl("shadow-react.html"));
+    await page.evaluate(() => globalThis.applyTranslationMutation());
+    await page.locator("#fixture-shadow-host").locator("#shadow-toggle").click();
+    expect(await page.evaluate(() => globalThis.fixtureError)).toContain("NotFoundError");
+  });
+
   test("protects a Radix-style select while leaving surrounding copy translatable", async ({ page }) => {
     await page.addInitScript({ content: genericGuardSource() });
     await runMutationFixture(
@@ -283,6 +291,103 @@ ${siteGeneratedSource}`;
       document.body.append(dynamic);
     });
     await expect(page.locator("#authorized-dynamic")).toHaveAttribute("translate", "no");
+  });
+
+  test("prevents a translated state mismatch inside an authorized open shadow root", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          "file://": {
+            enabled: true,
+            rules: [{
+              id: "shadow-fixture-rule",
+              selector: "#fixture-shadow-host >>> #shadow-fixture-root",
+              fingerprint: { tag: "custom-toggle", role: "button", landmark: "main" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(fixtureUrl("shadow-react.html"));
+    const shadowHost = page.locator("#fixture-shadow-host");
+    await expect(shadowHost.locator("#shadow-fixture-root")).toHaveAttribute("translate", "no");
+
+    await page.evaluate(() => globalThis.applyTranslationMutation());
+    await expect(page.locator("#outside-copy font[data-translated]")).toHaveCount(1);
+    await expect(shadowHost.locator("font[data-translated]")).toHaveCount(0);
+    await shadowHost.locator("#shadow-toggle").click();
+    expect(await page.evaluate(() => globalThis.fixtureError)).toBeNull();
+    await expect(shadowHost.locator("#shadow-result")).toHaveText("updated");
+  });
+
+  test("protects, observes, and restores dynamic components in an open shadow root", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [
+              {
+                id: "shadow-control-rule",
+                selector: "#shadow-host >>> #shadow-control",
+                fingerprint: { tag: "button", role: "combobox", landmark: "main" }
+              },
+              {
+                id: "shadow-dialog-rule",
+                selector: "#shadow-host >>> #late-shadow-dialog",
+                fingerprint: { tag: "div", role: "dialog", landmark: "div" }
+              }
+            ]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main>
+        <div id="shadow-host"></div>
+      </main>
+      <script>
+        const root = document.querySelector("#shadow-host").attachShadow({ mode: "open" });
+        root.innerHTML = '<button id="shadow-control" role="combobox">Private search</button>';
+      </script>
+    `)}`);
+
+    const shadowAttribute = (selector, name) => page.locator("#shadow-host").evaluate(
+      (host, [innerSelector, attribute]) => host.shadowRoot.querySelector(innerSelector)?.getAttribute(attribute),
+      [selector, name]
+    );
+    await expect.poll(() => shadowAttribute("#shadow-control", "translate")).toBe("no");
+
+    await page.locator("#shadow-host").evaluate((host) => {
+      const dialog = document.createElement("div");
+      dialog.id = "late-shadow-dialog";
+      dialog.setAttribute("role", "dialog");
+      dialog.textContent = "Private confirmation";
+      host.shadowRoot.append(dialog);
+    });
+    await expect.poll(() => shadowAttribute("#late-shadow-dialog", "translate")).toBe("no");
+
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.__requestSiteGuardMessage({
+        type: "site-guard:get-rule-health",
+        origin: "null"
+      })
+    ))).toMatchObject({
+      rules: [
+        { id: "shadow-control-rule", state: "healthy" },
+        { id: "shadow-dialog-rule", state: "healthy" }
+      ]
+    });
+
+    await page.evaluate(() => globalThis.__deliverSiteGuardMessage({
+      type: "site-guard:rules-updated",
+      origin: "null",
+      rules: []
+    }));
+    await expect.poll(() => shadowAttribute("#shadow-control", "translate")).toBeNull();
+    await expect.poll(() => shadowAttribute("#late-shadow-dialog", "translate")).toBeNull();
   });
 
   test("updates and safely restores rules on the current page", async ({ page }) => {
@@ -417,6 +522,41 @@ ${siteGeneratedSource}`;
         fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
       }
     });
+  });
+
+  test("rebinds a stale selector to one compatible component in an open shadow root", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "shadow-drift-rule",
+              selector: "#old-host >>> #old-search",
+              fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main><div id="new-host"></div></main>
+      <script>
+        const root = document.querySelector("#new-host").attachShadow({ mode: "open" });
+        root.innerHTML = '<custom-search id="new-search" role="combobox">Private query</custom-search>';
+      </script>
+    `)}`);
+
+    await expect.poll(() => page.locator("#new-host").evaluate((host) => (
+      host.shadowRoot.querySelector("#new-search").getAttribute("translate")
+    ))).toBe("no");
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.chrome.runtime.sentMessages.some((message) => (
+        message.type === "site-guard:rebind-rule" &&
+        message.rule.selector === "#new-host >>> #new-search"
+      ))
+    ))).toBe(true);
   });
 
   test("refuses ambiguous or weak fingerprint rebinding", async ({ page }) => {
@@ -789,6 +929,48 @@ ${siteGeneratedSource}`;
     ))).toBe(0);
   });
 
+  test("observes text-wrapper rewrites inside an open shadow root", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: { null: { enabled: true, rules: [] } }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main><div id="mutation-shadow-host"></div></main>
+      <script>
+        const root = document.querySelector("#mutation-shadow-host").attachShadow({ mode: "open" });
+        root.innerHTML = '<button id="shadow-observed" type="button">Private shadow action</button>';
+      </script>
+    `)}`);
+    await page.locator("#mutation-shadow-host").evaluate((host) => {
+      const button = host.shadowRoot.querySelector("#shadow-observed");
+      const original = button.firstChild;
+      const wrapper = document.createElement("span");
+      wrapper.append(original.cloneNode(true));
+      button.replaceChild(wrapper, original);
+    });
+
+    await expect.poll(() => page.evaluate(() => (
+      globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")].count()
+    ))).toBe(1);
+    const observed = await page.evaluate(() => {
+      const risks = globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")];
+      const selectors = globalThis[Symbol.for("search-translate-guard.selector-tools")];
+      return risks.candidates().map(({ element, reasons }) => ({
+        id: element.id,
+        selector: selectors.selectorFor(element),
+        reasons
+      }));
+    });
+    expect(observed).toEqual([{
+      id: "shadow-observed",
+      selector: "#mutation-shadow-host >>> #shadow-observed",
+      reasons: expect.arrayContaining(["observed-text-rewrite"])
+    }]);
+    expect(JSON.stringify(observed)).not.toContain("Private shadow action");
+  });
+
   test("bounds and expires observed risks while ignoring protected components", async ({ page }) => {
     await page.clock.install();
     await page.addInitScript({
@@ -831,6 +1013,57 @@ ${siteGeneratedSource}`;
   });
 });
 
+test.describe("open shadow selector paths", () => {
+  test("generates and resolves bounded selectors across nested open roots", async ({ page }) => {
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main>
+        <div id="outer-shadow-host"></div>
+        <div data-test="literal>>>value" id="literal-separator"></div>
+      </main>
+      <script>
+        const outer = document.querySelector("#outer-shadow-host").attachShadow({ mode: "open" });
+        outer.innerHTML = '<custom-shell id="inner-shadow-host"></custom-shell>';
+        const inner = outer.querySelector("#inner-shadow-host").attachShadow({ mode: "open" });
+        inner.innerHTML = '<button id="deep-control" role="combobox">Private nested action</button>';
+      </script>
+    `)}`);
+    await page.addScriptTag({ content: composedTreeSource });
+    await page.addScriptTag({ content: selectorToolsSource });
+
+    const result = await page.evaluate(() => {
+      const tree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
+      const tools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
+      const outer = document.querySelector("#outer-shadow-host");
+      const inner = outer.shadowRoot.querySelector("#inner-shadow-host");
+      const control = inner.shadowRoot.querySelector("#deep-control");
+      const selector = tools.selectorFor(control);
+      let invalidRejected = false;
+      try {
+        tools.querySelectorAll(document, "#outer-shadow-host >>> >>> #deep-control");
+      } catch {
+        invalidRejected = true;
+      }
+      return {
+        selector,
+        resolvedIds: tools.querySelectorAll(document, selector).map((element) => element.id),
+        openIds: tools.querySelectorAllOpen(document, "#deep-control").map((element) => element.id),
+        literalIds: tree.queryAll(document, '[data-test="literal>>>value"]').map((element) => element.id),
+        fingerprint: tools.fingerprintFor(control),
+        invalidRejected
+      };
+    });
+
+    expect(result).toEqual({
+      selector: "#outer-shadow-host >>> #inner-shadow-host >>> #deep-control",
+      resolvedIds: ["deep-control"],
+      openIds: ["deep-control"],
+      literalIds: ["literal-separator"],
+      fingerprint: { tag: "button", role: "combobox", type: "", name: "", landmark: "main" },
+      invalidRejected: true
+    });
+  });
+});
+
 test.describe("risk detector", () => {
   test("ranks structural interaction signals without reading text or field values", async ({ page }) => {
     await page.goto(`data:text/html,${encodeURIComponent(`
@@ -841,6 +1074,7 @@ test.describe("risk detector", () => {
       <relative-time id="passive-custom">2026-07-11</relative-time>
       <button id="plain-button" type="button">Ordinary action</button>
     `)}`);
+    await page.addScriptTag({ content: composedTreeSource });
     await page.addScriptTag({ content: riskDetectorSource });
 
     const result = await page.evaluate(() => {
@@ -888,6 +1122,7 @@ globalThis.chrome = {
         });
       </script>
     `)}`);
+    await page.addScriptTag({ content: composedTreeSource });
     await page.addScriptTag({ content: riskDetectorSource });
     await page.addScriptTag({ content: selectorToolsSource });
     await page.addScriptTag({ content: pickerSource });
@@ -911,6 +1146,60 @@ globalThis.chrome = {
     expect(JSON.stringify(payload)).not.toContain("Private visible search words");
   });
 
+  test("selects an interactive boundary inside an open shadow root", async ({ page }) => {
+    await page.addInitScript({ content: `
+globalThis.pickerMessages = [];
+globalThis.pageClickCount = 0;
+globalThis.chrome = {
+  i18n: { getMessage: () => "" },
+  runtime: {
+    lastError: null,
+    sendMessage: (message, callback) => {
+      globalThis.pickerMessages.push(message);
+      callback({ ok: true, result: { ruleCount: 1 } });
+    }
+  }
+};` });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main><div id="picker-shadow-host"></div></main>
+      <script>
+        const root = document.querySelector("#picker-shadow-host").attachShadow({ mode: "open" });
+        root.innerHTML = '<custom-search id="shadow-search" role="combobox"><button id="shadow-trigger" type="button">Private shadow words</button></custom-search>';
+        root.querySelector("#shadow-trigger").addEventListener("click", () => {
+          globalThis.pageClickCount += 1;
+        });
+      </script>
+    `)}`);
+    await page.addScriptTag({ content: composedTreeSource });
+    await page.addScriptTag({ content: riskDetectorSource });
+    await page.addScriptTag({ content: selectorToolsSource });
+    await page.addScriptTag({ content: pickerSource });
+
+    const picker = page.locator("#search-translate-guard-picker");
+    await picker.locator("button.manual").click();
+    const trigger = page.locator("#picker-shadow-host").locator("#shadow-trigger");
+    await trigger.hover();
+    await trigger.click();
+    await expect(picker.locator(".selector")).toHaveText(
+      "#picker-shadow-host >>> #shadow-search"
+    );
+    await picker.locator("button.protect").click();
+
+    await expect.poll(() => page.locator("#picker-shadow-host").evaluate((host) => (
+      host.shadowRoot.querySelector("#shadow-search").getAttribute("translate")
+    ))).toBe("no");
+    expect(await page.evaluate(() => globalThis.pageClickCount)).toBe(0);
+    const payload = await page.evaluate(() => globalThis.pickerMessages[0]);
+    expect(payload).toMatchObject({
+      type: "site-guard:add-rule",
+      rule: {
+        selector: "#picker-shadow-host >>> #shadow-search",
+        fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+      }
+    });
+    expect(JSON.stringify(payload)).not.toContain("Private shadow words");
+  });
+
   test("offers ranked high-risk boundaries while keeping confirmation local", async ({ page }) => {
     await page.addInitScript({ content: `
 globalThis.pickerMessages = [];
@@ -931,6 +1220,7 @@ globalThis.chrome = {
         <p>Outside private copy</p>
       </main>
     `)}`);
+    await page.addScriptTag({ content: composedTreeSource });
     await page.addScriptTag({ content: riskDetectorSource });
     await page.addScriptTag({ content: selectorToolsSource });
     await page.addScriptTag({ content: pickerSource });
@@ -976,6 +1266,7 @@ globalThis.chrome = {
         ruleId: "unresolved-rule"
       };
     });
+    await page.addScriptTag({ content: composedTreeSource });
     await page.addScriptTag({ content: riskDetectorSource });
     await page.addScriptTag({ content: selectorToolsSource });
     await page.addScriptTag({ content: pickerSource });

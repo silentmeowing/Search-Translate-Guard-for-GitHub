@@ -2,6 +2,7 @@
   "use strict";
 
   const runtimeSymbol = Symbol.for("search-translate-guard.runtime");
+  const composedTreeSymbol = Symbol.for("search-translate-guard.composed-tree");
   if (globalThis[runtimeSymbol]) return;
 
   /**
@@ -52,6 +53,8 @@
   }
 
   function selectWithin(root, selector) {
+    const composedTree = globalThis[composedTreeSymbol];
+    if (composedTree?.queryAll) return composedTree.queryAll(root, selector);
     const matches = [];
     if (root instanceof Element && root.matches(selector)) matches.push(root);
     root?.querySelectorAll?.(selector).forEach((element) => matches.push(element));
@@ -169,11 +172,19 @@
     if (started) return;
     started = true;
 
-    new MutationObserver((records) => {
+    const options = { childList: true, subtree: true };
+    const observer = new MutationObserver((records) => {
+      const composedTree = globalThis[composedTreeSymbol];
       for (const record of records) {
-        for (const node of record.addedNodes) scanAll(node);
+        for (const node of record.addedNodes) {
+          composedTree?.observe?.(observer, node, options);
+          scanAll(node);
+        }
       }
-    }).observe(document, { childList: true, subtree: true });
+    });
+    const composedTree = globalThis[composedTreeSymbol];
+    if (composedTree?.observe) composedTree.observe(observer, document, options);
+    else observer.observe(document, options);
 
     for (const adapter of adapters) activateAdapter(adapter);
   }

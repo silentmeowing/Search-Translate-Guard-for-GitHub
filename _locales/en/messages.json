@@ -3,7 +3,7 @@
     "message": "Search Translate Guard for GitHub"
   },
   "extensionDescription": {
-    "message": "Protects GitHub search during translation and helps find, diagnose, and repair risky components on user-authorized sites."
+    "message": "Protects GitHub search during translation and finds or repairs risky components, including open Shadow DOM, on authorized sites."
   },
   "fallbackTitle": {
     "message": "GitHub Search"
