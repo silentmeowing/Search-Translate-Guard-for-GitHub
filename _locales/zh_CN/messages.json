@@ -20,6 +20,9 @@
   "fallbackHint": {
     "message": "按 Enter 搜索 · 按 Esc 关闭"
   },
+  "fallbackLauncher": {
+    "message": "兼容搜索"
+  },
   "siteGuardActionTitle": {
     "message": "管理翻译保护"
   },

@@ -1444,11 +1444,19 @@ test.describe("GitHub adapter", () => {
     await page.addInitScript({ content: generatedSource });
     await page.route("https://github.com/**", async (route) => {
       const requestUrl = new URL(route.request().url());
-      await route.fulfill({
-        contentType: "text/html",
-        body: requestUrl.pathname.endsWith("/authenticated")
-          ? authenticatedGitHubFixture
-          : `<!doctype html>
+      let body;
+      if (requestUrl.pathname === "/search") {
+        body = `<!doctype html>
+          <html><body>
+            <main>
+              <h1>Search results</h1>
+              <p id="result-query">${requestUrl.searchParams.get("q") || ""}</p>
+            </main>
+          </body></html>`;
+      } else if (requestUrl.pathname.endsWith("/authenticated")) {
+        body = authenticatedGitHubFixture;
+      } else {
+        body = `<!doctype html>
           <html><body>
             <qbsearch-input
               data-scope="repo:silentmeowing/Search-Translate-Guard-for-GitHub"
@@ -1459,7 +1467,11 @@ test.describe("GitHub adapter", () => {
               <input id="query-builder-test" role="combobox" style="width: 240px; height: 32px">
             </qbsearch-input>
             <textarea id="editor"></textarea>
-          </body></html>`
+          </body></html>`;
+      }
+      await route.fulfill({
+        contentType: "text/html",
+        body
       });
     });
   });
@@ -1497,6 +1509,9 @@ test.describe("GitHub adapter", () => {
     expect(await page.locator("qbsearch-input").evaluateAll((elements) => (
       elements.map((element) => element.getAttribute("translate"))
     ))).toEqual(["no", "no"]);
+    const launcher = page.locator("#github-search-translate-guard-launcher");
+    await expect(launcher).toHaveCount(1);
+    await expect(launcher).toBeHidden();
 
     await page.evaluate(() => globalThis.applyTranslationMutation());
     await expect(page.locator("#outside-copy font[data-translated]")).toHaveCount(1);
@@ -1522,6 +1537,41 @@ test.describe("GitHub adapter", () => {
     await expect(fallback.locator("input")).toHaveValue(
       "repo:silentmeowing/Search-Translate-Guard-for-GitHub "
     );
+  });
+
+  test("keeps compatibility search reusable after navigation and repeated dismissal", async ({ page }) => {
+    await page.goto("https://github.com/example/authenticated");
+    await page.evaluate(() => {
+      globalThis.githubFixtureForceFailure = true;
+    });
+    await page.locator("#authenticated-search-trigger").click();
+
+    let fallback = page.locator("#github-search-translate-guard");
+    await expect(fallback.locator("input")).toBeVisible({ timeout: 1_500 });
+    await fallback.locator(".backdrop").click({ position: { x: 5, y: 5 } });
+    await expect(fallback.locator("input")).toBeVisible();
+    await fallback.locator("input").fill("first query");
+    await fallback.locator("input").press("Enter");
+    await expect(page).toHaveURL("https://github.com/search?q=first+query");
+
+    let launcher = page.locator("#github-search-translate-guard-launcher").locator("button");
+    await expect(launcher).toBeVisible({ timeout: 1_500 });
+    await launcher.click();
+    fallback = page.locator("#github-search-translate-guard");
+    await expect(fallback.locator("input")).toBeVisible();
+
+    await fallback.locator("input").press("Escape");
+    await expect(fallback).toBeHidden();
+    launcher = page.locator("#github-search-translate-guard-launcher").locator("button");
+    await expect(launcher).toBeVisible();
+    await launcher.click();
+    await expect(fallback.locator("input")).toBeVisible();
+
+    await fallback.locator("input").fill("second query");
+    await fallback.locator("input").press("Enter");
+    await expect(page).toHaveURL("https://github.com/search?q=second+query");
+    await expect(page.locator("#github-search-translate-guard-launcher").locator("button"))
+      .toBeVisible({ timeout: 1_500 });
   });
 
   test("protects the compact responsive trigger and recovers when it is inert", async ({ page }) => {
