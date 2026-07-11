@@ -31,11 +31,12 @@ Tests do not depend on mutable production websites or on an automation API for b
 
 - The React/Next-style fixture conditionally removes a text node retained by application state.
 - The Radix-style fixture replaces select trigger text during a loading transition and inserts dynamic options.
+- The open-shadow fixture holds a framework-style text reference inside an open shadow root and fails after the same wrapper mutation when unprotected.
 
-Each fixture first proves that the unprotected version fails, then proves that the guard prevents the mutation inside the selected subtree while outside copy remains translatable. GitHub-specific tests separately cover initial and dynamic nodes, Turbo pre-render content, healthy native search, editable-field shortcuts, fallback scope, reloads, and multiple tabs.
+Each fixture first proves that the unprotected version fails, then proves that the guard prevents the mutation inside the selected subtree while outside copy remains translatable. Open-shadow coverage additionally verifies nested selector paths, dynamic insertion, observed rewrites, health checks, attribute restoration, and selector rebinding. GitHub-specific tests separately cover initial and dynamic nodes, Turbo pre-render content, healthy native search, editable-field shortcuts, fallback scope, reloads, and multiple tabs.
 
 ## Product boundary
 
-Version 2.6.0 provides an opt-in path with local structural risk suggestions, bounded recent DOM-rewrite evidence, conservative selector-drift repair, user-visible rule health, and targeted explicit repair for user-authorized sites. GitHub remains the only statically matched site. Other HTTP or HTTPS sites require an explicit browser permission prompt, a user-confirmed component boundary, and a data-only local rule. The generic path provides best-effort candidate discovery, stable unique-candidate rebinding, translation isolation, and local diagnostics but does not claim to understand or recover arbitrary site behavior.
+Version 2.7.0 provides an opt-in path with local structural risk suggestions, bounded recent DOM-rewrite evidence, nested open Shadow DOM rules, conservative selector-drift repair, user-visible rule health, and targeted explicit repair for user-authorized sites. GitHub remains the only statically matched site. Other HTTP or HTTPS sites require an explicit browser permission prompt, a user-confirmed component boundary, and a data-only local rule. The generic path provides best-effort candidate discovery, stable unique-candidate rebinding, translation isolation, and local diagnostics but does not claim to understand or recover arbitrary site behavior. Closed shadow roots and cross-origin frames remain unsupported.
 
 Community rules and additional recovery adapters remain future work. They must not convert optional access into automatic all-site access or introduce remotely executable rules.

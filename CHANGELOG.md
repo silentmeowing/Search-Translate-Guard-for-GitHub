@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here.
 
+## [2.7.0] - 2026-07-11
+
+### Added
+
+- User-confirmed component rules inside nested open Shadow DOM trees.
+- Bounded `host >>> inner` selector paths shared by protection, risk detection, mutation observation, health checks, and selector-drift repair.
+- Composed event targeting in the component picker so an inner interactive boundary can be selected without activating the page.
+
+### Safety and performance
+
+- Open-shadow discovery is bounded, lifecycle-driven, and never patches `attachShadow` or page DOM methods.
+- Deep selector paths are limited to eight segments and query results are capped at 5,000 elements.
+- Mutation-risk observation now remains disconnected until the stored site configuration confirms that protection is enabled.
+- Closed shadow roots and cross-origin frames remain outside the supported boundary.
+- No new browser permissions, required host access, remote code, or runtime dependencies were added.
+
+### Validation
+
+- Added a deterministic open-shadow translation fixture that fails without protection and succeeds after an authorized deep rule is applied while outside copy remains translatable.
+- Added nested selector, dynamic insertion, attribute restoration, observed rewrite, health, rebind, popup, and data-minimization regressions.
+
 ## [2.6.0] - 2026-07-11
 
 ### Added

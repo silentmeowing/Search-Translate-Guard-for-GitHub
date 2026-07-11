@@ -146,7 +146,7 @@ test.describe("site guard service worker", () => {
       const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
       expect(manifest).toMatchObject({
         manifest_version: 3,
-        version: "2.6.0",
+        version: "2.7.0",
         permissions: ["activeTab", "scripting", "storage"],
         optional_host_permissions: ["http://*/*", "https://*/*"]
       });
