@@ -120,7 +120,7 @@ elements.enable.addEventListener("click", async () => {
 elements.select.addEventListener("click", async () => {
   elements.error.hidden = true;
   try {
-    await executeFiles(["src/risk-detector.js", "src/picker.js"]);
+    await executeFiles(["src/risk-detector.js", "src/selector-tools.js", "src/picker.js"]);
     globalThis.close();
   } catch (error) {
     showError(error);

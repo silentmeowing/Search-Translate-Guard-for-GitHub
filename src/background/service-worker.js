@@ -72,6 +72,13 @@ function sanitizeFingerprint(fingerprint) {
   return sanitized;
 }
 
+function preservesFingerprintIdentity(previous, next) {
+  if (!previous.tag) return false;
+  return ["tag", "role", "type", "name", "landmark"].every((key) => (
+    !previous[key] || previous[key] === next[key]
+  ));
+}
+
 function sanitizeRule(rule) {
   const selector = typeof rule?.selector === "string" ? rule.selector.trim() : "";
   if (!selector || selector.length > MAX_SELECTOR_LENGTH) {
@@ -83,6 +90,12 @@ function sanitizeRule(rule) {
     fingerprint: sanitizeFingerprint(rule.fingerprint),
     createdAt: new Date().toISOString()
   };
+}
+
+function assertSenderOrigin(normalizedOrigin, sender) {
+  if (!sender?.url || canonicalOrigin(sender.url) !== normalizedOrigin) {
+    throw new Error("The selected component does not belong to the requested site");
+  }
 }
 
 async function hasOriginPermission(origin) {
@@ -178,9 +191,7 @@ async function clearRules(origin, tabId) {
 
 async function addRule(origin, rule, sender) {
   const normalizedOrigin = canonicalOrigin(origin);
-  if (sender?.url && canonicalOrigin(sender.url) !== normalizedOrigin) {
-    throw new Error("The selected component does not belong to the requested site");
-  }
+  assertSenderOrigin(normalizedOrigin, sender);
   if (!await hasOriginPermission(normalizedOrigin)) {
     throw new Error("Site access is no longer granted");
   }
@@ -200,6 +211,47 @@ async function addRule(origin, rule, sender) {
   }
   await notifyRulesUpdated(sender?.tab?.id, normalizedOrigin, site.rules);
   return siteStatus(normalizedOrigin);
+}
+
+async function rebindRule(origin, rule, sender) {
+  const normalizedOrigin = canonicalOrigin(origin);
+  assertSenderOrigin(normalizedOrigin, sender);
+  if (!await hasOriginPermission(normalizedOrigin)) {
+    throw new Error("Site access is no longer granted");
+  }
+
+  const id = typeof rule?.id === "string" ? rule.id.trim() : "";
+  const selector = typeof rule?.selector === "string" ? rule.selector.trim() : "";
+  if (!id || id.length > 128) throw new Error("The component rule id is invalid");
+  if (!selector || selector.length > MAX_SELECTOR_LENGTH) {
+    throw new Error("The component selector is missing or too long");
+  }
+
+  const config = await loadConfig();
+  const site = getOrCreateSite(config, normalizedOrigin);
+  if (!site.enabled) throw new Error("Protection is not enabled for this site");
+  const storedRule = site.rules.find((candidate) => candidate?.id === id);
+  if (!storedRule) throw new Error("The component rule no longer exists");
+  if (site.rules.some((candidate) => candidate !== storedRule && candidate?.selector === selector)) {
+    throw new Error("Another component rule already uses this selector");
+  }
+
+  const previousFingerprint = sanitizeFingerprint(storedRule.fingerprint);
+  const nextFingerprint = sanitizeFingerprint(rule.fingerprint);
+  if (!preservesFingerprintIdentity(previousFingerprint, nextFingerprint)) {
+    throw new Error("The rebound component fingerprint does not match the stored rule");
+  }
+
+  storedRule.selector = selector;
+  storedRule.fingerprint = nextFingerprint;
+  storedRule.reboundAt = new Date().toISOString();
+  await saveConfig(config);
+  return {
+    id: storedRule.id,
+    selector: storedRule.selector,
+    fingerprint: storedRule.fingerprint,
+    reboundAt: storedRule.reboundAt
+  };
 }
 
 async function reconcileRegistrations() {
@@ -246,6 +298,8 @@ async function handleMessage(message, sender) {
       return clearRules(message.origin, message.tabId);
     case "site-guard:add-rule":
       return addRule(message.origin, message.rule, sender);
+    case "site-guard:rebind-rule":
+      return rebindRule(message.origin, message.rule, sender);
     default:
       throw new Error("Unknown site guard message");
   }
