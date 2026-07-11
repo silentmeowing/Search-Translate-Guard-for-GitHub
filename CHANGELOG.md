@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented here.
 
+## [2.8.0] - 2026-07-11
+
+### Added
+
+- User-confirmed protection rules for directly loaded HTTP/HTTPS same-origin child frames on authorized sites.
+- Persistent top-document and child-frame rule scopes so identical selectors cannot overwrite or leak across contexts.
+- Aggregated, ephemeral frame health and scoped repair picker activation across up to 64 responding same-origin frames.
+
+### Safety and compatibility
+
+- Dynamic content scripts use URL-matched `allFrames` registration, while runtime discovery uses responses from already authorized content scripts instead of a programmatic all-frame probe that can fail on inaccessible cross-origin frames.
+- Picker files are injected into each confirmed frame separately so a navigation or inaccessible frame cannot cancel every other eligible injection.
+- Legacy rules remain top-document rules. Child-frame rules never auto-rebind across sibling frames and require explicit user-confirmed repair.
+- Frame IDs, URLs, health snapshots, and page content are never persisted; stored rules add only a `top` or `child` scope.
+- Cross-origin frames, closed shadow roots, and `about:`, `data:`, `blob:`, `filesystem:`, or `srcdoc` fallback documents remain unsupported.
+- No new browser permissions, required host access, remote code, or runtime dependencies were added.
+
+### Validation
+
+- Added deterministic same-origin iframe fixtures that reproduce the unprotected translation mismatch and verify initial, dynamic, and outside-content behavior with protection.
+- Added frame-scope isolation, child auto-rebind rejection, explicit scoped repair, bounded aggregation, popup labeling, and per-frame picker injection regressions.
+
 ## [2.7.0] - 2026-07-11
 
 ### Added

@@ -3,7 +3,7 @@
     "message": "Search Translate Guard for GitHub"
   },
   "extensionDescription": {
-    "message": "Protects GitHub search during translation and finds or repairs risky components, including open Shadow DOM, on authorized sites."
+    "message": "Protects GitHub search during translation and repairs risky components in open Shadow DOM or same-origin frames on authorized sites."
   },
   "fallbackTitle": {
     "message": "GitHub Search"
@@ -42,7 +42,7 @@
     "message": "Disable for this site"
   },
   "siteGuardReloadHint": {
-    "message": "Reload the page after adding or removing protection rules."
+    "message": "Reload the page after enabling protection or changing rules."
   },
   "siteGuardEnabled": {
     "message": "User-selected protection is enabled."
@@ -55,6 +55,18 @@
     "placeholders": {
       "count": { "content": "$1" }
     }
+  },
+  "siteGuardFrameCount": {
+    "message": "Protection is active in $COUNT$ same-origin frames.",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "siteGuardTopFrame": {
+    "message": "Top document"
+  },
+  "siteGuardChildFrame": {
+    "message": "Same-origin child frame"
   },
   "siteGuardObservedRisks": {
     "message": "$COUNT$ recent risky DOM rewrite(s) were observed. Review suggested components.",

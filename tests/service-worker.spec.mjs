@@ -23,7 +23,10 @@ function createEvent() {
 function createWorkerHarness() {
   const storage = {};
   const registrations = [];
+  const scriptExecutions = [];
   const tabMessages = [];
+  const frameResponseFrameIds = [];
+  const acceptedFrameIds = [];
   const tabUrls = new Map([
     [7, "https://attacker.example/page"],
     [42, "https://example.com/app"],
@@ -34,6 +37,12 @@ function createWorkerHarness() {
     observedRiskCount: 0,
     rules: []
   };
+  const runtimeHealthByFrame = new Map();
+  const frameOrigins = new Map([
+    [0, "https://example.com"],
+    [4, "https://example.com"],
+    [9, "https://embedded.example"]
+  ]);
   const grantedOrigins = new Set(["https://example.com/*"]);
   const onMessage = createEvent();
   const chrome = {
@@ -74,6 +83,10 @@ function createWorkerHarness() {
           const index = registrations.findIndex((candidate) => candidate.id === id);
           if (index >= 0) registrations.splice(index, 1);
         }
+      },
+      async executeScript(options) {
+        scriptExecutions.push(structuredClone(options));
+        return (options.target?.frameIds || []).map((frameId) => ({ frameId }));
       }
     },
     tabs: {
@@ -90,11 +103,47 @@ function createWorkerHarness() {
         const url = tabUrls.get(tabId);
         return url ? { id: tabId, url } : null;
       },
-      async sendMessage(tabId, message) {
-        tabMessages.push({ tabId, message: structuredClone(message) });
+      async sendMessage(tabId, message, options = {}, callback) {
+        tabMessages.push({
+          tabId,
+          message: structuredClone(message),
+          options: structuredClone(options)
+        });
         if (message.type === "site-guard:get-rule-health") {
-          return structuredClone(runtimeHealth);
+          const response = structuredClone(runtimeHealthByFrame.get(options.frameId) || runtimeHealth);
+          callback?.(response);
+          return response;
         }
+        if (
+          message.type === "site-guard:collect-frame-health" ||
+          message.type === "site-guard:prepare-frame-picker"
+        ) {
+          const kind = message.type === "site-guard:collect-frame-health" ? "health" : "picker";
+          for (const [frameId, frameOrigin] of frameOrigins) {
+            if (frameOrigin !== message.origin) continue;
+            const scope = frameId === 0 ? "top" : "child";
+            if (message.frameScope && message.frameScope !== scope) continue;
+            frameResponseFrameIds.push(frameId);
+            const snapshot = kind === "health"
+              ? structuredClone(runtimeHealthByFrame.get(frameId) || runtimeHealth)
+              : undefined;
+            const response = await send({
+              type: "site-guard:frame-response",
+              origin: message.origin,
+              requestId: message.requestId,
+              kind,
+              snapshot
+            }, {
+              url: `${frameOrigin}/frame`,
+              tab: { id: tabId },
+              frameId
+            });
+            if (response.result?.accepted) acceptedFrameIds.push(frameId);
+          }
+          callback?.();
+          return undefined;
+        }
+        callback?.();
       }
     },
     runtime: {
@@ -108,6 +157,8 @@ function createWorkerHarness() {
     chrome,
     console,
     crypto: { randomUUID: crypto.randomUUID },
+    clearTimeout,
+    setTimeout,
     structuredClone,
     URL
   });
@@ -120,9 +171,14 @@ function createWorkerHarness() {
   }
 
   return {
+    acceptedFrameIds,
+    frameOrigins,
+    frameResponseFrameIds,
     grantedOrigins,
     registrations,
     runtimeHealth,
+    runtimeHealthByFrame,
+    scriptExecutions,
     send,
     storage,
     tabMessages,
@@ -146,7 +202,7 @@ test.describe("site guard service worker", () => {
       const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
       expect(manifest).toMatchObject({
         manifest_version: 3,
-        version: "2.7.0",
+        version: "2.8.0",
         permissions: ["activeTab", "scripting", "storage"],
         optional_host_permissions: ["http://*/*", "https://*/*"]
       });
@@ -173,6 +229,7 @@ test.describe("site guard service worker", () => {
     expect(harness.registrations[0]).toMatchObject({
       matches: ["https://example.com/*"],
       js: ["Site-Translate-Guard.content.js"],
+      allFrames: true,
       runAt: "document_start",
       persistAcrossSessions: true
     });
@@ -201,6 +258,7 @@ test.describe("site guard service worker", () => {
     expect(response.result.ruleCount).toBe(1);
     const storedRule = harness.storage.siteGuardConfig.sites["https://example.com"].rules[0];
     expect(storedRule.selector).toBe("main > custom-shell >>> custom-search[role=combobox]");
+    expect(storedRule.frameScope).toBe("top");
     expect(storedRule.fingerprint).toEqual({ tag: "custom-search", role: "combobox" });
     expect(JSON.stringify(storedRule)).not.toContain("private visible page text");
     expect(harness.tabMessages.find(({ tabId }) => tabId === 42)).toMatchObject({
@@ -341,11 +399,197 @@ test.describe("site guard service worker", () => {
 
     expect(response.ok).toBe(true);
     expect(response.result.rules).toEqual([
-      { id: storedRules[0].id, selector: "#search", state: "healthy" },
-      { id: storedRules[1].id, selector: "#menu", state: "ambiguous" }
+      { id: storedRules[0].id, selector: "#search", frameScope: "top", state: "healthy" },
+      { id: storedRules[1].id, selector: "#menu", frameScope: "top", state: "ambiguous" }
     ]);
     expect(response.result.observedRiskCount).toBe(24);
+    expect(response.result.sameOriginFrameCount).toBe(2);
     expect(JSON.stringify(harness.storage)).not.toContain("private page copy");
+  });
+
+  test("aggregates rule health only from responding same-origin frames", async () => {
+    const harness = createWorkerHarness();
+    await harness.send({ type: "site-guard:enable", origin: "https://example.com" });
+    await harness.send({
+      type: "site-guard:add-rule",
+      origin: "https://example.com",
+      rule: {
+        selector: "#embedded-search",
+        fingerprint: { tag: "custom-search", role: "combobox" }
+      }
+    }, {
+      url: "https://example.com/app",
+      tab: { id: 42 },
+      frameId: 4
+    });
+    const storedRule = harness.storage.siteGuardConfig.sites["https://example.com"].rules[0];
+    expect(storedRule.frameScope).toBe("child");
+    harness.runtimeHealth.observedRiskCount = 1;
+    harness.runtimeHealth.rules = [];
+    harness.runtimeHealthByFrame.set(4, {
+      origin: "https://example.com",
+      observedRiskCount: 2,
+      rules: [{ id: storedRule.id, state: "healthy", text: "private iframe copy" }]
+    });
+    harness.runtimeHealthByFrame.set(9, {
+      origin: "https://embedded.example",
+      observedRiskCount: 24,
+      rules: [{ id: storedRule.id, state: "healthy" }]
+    });
+
+    const response = await harness.send({
+      type: "site-guard:get-status",
+      origin: "https://example.com",
+      tabId: 42
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.result).toMatchObject({
+      sameOriginFrameCount: 2,
+      observedRiskCount: 3,
+      rules: [{ id: storedRule.id, frameScope: "child", state: "healthy" }]
+    });
+    expect(JSON.stringify(response.result)).not.toContain("private iframe copy");
+    const healthFrameIds = [...harness.acceptedFrameIds]
+      .sort((left, right) => left - right);
+    expect(healthFrameIds).toEqual([0, 4]);
+  });
+
+  test("keeps top and child rules separate and opens repair only in the stored scope", async () => {
+    const harness = createWorkerHarness();
+    await harness.send({ type: "site-guard:enable", origin: "https://example.com" });
+    const rule = {
+      selector: "#shared-search",
+      fingerprint: { tag: "custom-search", role: "combobox" }
+    };
+    await harness.send({
+      type: "site-guard:add-rule",
+      origin: "https://example.com",
+      rule
+    }, {
+      url: "https://example.com/app",
+      tab: { id: 42 },
+      frameId: 0
+    });
+    await harness.send({
+      type: "site-guard:add-rule",
+      origin: "https://example.com",
+      rule
+    }, {
+      url: "https://example.com/frame",
+      tab: { id: 42 },
+      frameId: 4
+    });
+
+    const storedRules = harness.storage.siteGuardConfig.sites["https://example.com"].rules;
+    expect(storedRules.map(({ frameScope }) => frameScope)).toEqual(["top", "child"]);
+    const childRule = storedRules[1];
+
+    const opened = await harness.send({
+      type: "site-guard:open-picker",
+      origin: "https://example.com",
+      tabId: 42,
+      ruleId: childRule.id
+    });
+    expect(opened).toEqual({
+      ok: true,
+      result: { origin: "https://example.com", frameCount: 1, frameScope: "child" }
+    });
+    expect(harness.scriptExecutions).toEqual([{
+      target: { tabId: 42, frameIds: [4] },
+      files: [
+        "src/composed-tree.js",
+        "src/risk-detector.js",
+        "src/selector-tools.js",
+        "src/picker.js"
+      ]
+    }]);
+
+    const automaticChildRepair = await harness.send({
+      type: "site-guard:rebind-rule",
+      origin: "https://example.com",
+      rule: { ...childRule, selector: "#automatic-child-search" }
+    }, {
+      url: "https://example.com/frame",
+      tab: { id: 42 },
+      frameId: 4
+    });
+    expect(automaticChildRepair.ok).toBe(false);
+    expect(automaticChildRepair.error).toContain("top-document");
+
+    const wrongScopeRepair = await harness.send({
+      type: "site-guard:replace-rule",
+      origin: "https://example.com",
+      rule: { ...childRule, selector: "#wrong-scope-search" }
+    }, {
+      url: "https://example.com/app",
+      tab: { id: 42 },
+      frameId: 0
+    });
+    expect(wrongScopeRepair.ok).toBe(false);
+    expect(wrongScopeRepair.error).toContain("frame scope");
+
+    const repaired = await harness.send({
+      type: "site-guard:replace-rule",
+      origin: "https://example.com",
+      rule: { ...childRule, selector: "#explicit-child-search" }
+    }, {
+      url: "https://example.com/frame",
+      tab: { id: 42 },
+      frameId: 4
+    });
+    expect(repaired.ok).toBe(true);
+    expect(storedRules[1]).toMatchObject({
+      selector: "#explicit-child-search",
+      frameScope: "child"
+    });
+  });
+
+  test("bounds same-origin frame health inspection", async () => {
+    const harness = createWorkerHarness();
+    harness.frameOrigins.clear();
+    for (let frameId = 0; frameId < 80; frameId += 1) {
+      harness.frameOrigins.set(frameId, "https://example.com");
+    }
+    await harness.send({ type: "site-guard:enable", origin: "https://example.com" });
+
+    const response = await harness.send({
+      type: "site-guard:get-status",
+      origin: "https://example.com",
+      tabId: 42
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.result.sameOriginFrameCount).toBe(64);
+    expect(harness.acceptedFrameIds).toHaveLength(64);
+    expect(harness.acceptedFrameIds.at(-1)).toBe(63);
+    expect(harness.scriptExecutions).toEqual([]);
+  });
+
+  test("cancels pickers across the tab only for the sender origin", async () => {
+    const harness = createWorkerHarness();
+    const accepted = await harness.send({
+      type: "site-guard:cancel-picker",
+      origin: "https://example.com"
+    }, {
+      url: "https://example.com/frame",
+      tab: { id: 42 }
+    });
+    expect(accepted).toEqual({ ok: true, result: { origin: "https://example.com" } });
+    expect(harness.tabMessages.at(-1)).toMatchObject({
+      tabId: 42,
+      message: { type: "site-guard:cancel-picker", origin: "https://example.com" }
+    });
+
+    const rejected = await harness.send({
+      type: "site-guard:cancel-picker",
+      origin: "https://example.com"
+    }, {
+      url: "https://attacker.example/frame",
+      tab: { id: 7 }
+    });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.error).toContain("does not belong");
   });
 
   test("explicitly repairs and removes one rule while rejecting cross-origin actions", async () => {

@@ -100,6 +100,7 @@
   let selector = "";
   let suggestions = [];
   let suggestionIndex = -1;
+  let finishTimer = null;
   let finished = false;
 
   function chooseBoundary(target) {
@@ -251,18 +252,39 @@
   function cleanup() {
     if (finished) return;
     finished = true;
+    if (finishTimer !== null) clearTimeout(finishTimer);
     document.removeEventListener("pointermove", onPointerMove, true);
     document.removeEventListener("pointerdown", onPagePointerDown, true);
     document.removeEventListener("click", onPageClick, true);
     document.removeEventListener("keydown", onKeyDown, true);
+    chrome.runtime.onMessage?.removeListener?.(onRuntimeMessage);
     globalThis.removeEventListener("scroll", onViewportChange, true);
     globalThis.removeEventListener("resize", onViewportChange, true);
     host.remove();
     delete globalThis[pickerSymbol];
   }
 
+  function cancelEverywhere() {
+    try {
+      chrome.runtime.sendMessage({
+        type: "site-guard:cancel-picker",
+        origin: location.origin
+      }, () => void chrome.runtime.lastError);
+    } catch {
+      // A disconnected extension context can still close its local picker.
+    }
+    cleanup();
+  }
+
+  function onRuntimeMessage(message) {
+    if (message?.type === "site-guard:cancel-picker" && message.origin === location.origin) {
+      cleanup();
+    }
+    return false;
+  }
+
   function onKeyDown(event) {
-    if (event.key === "Escape") cleanup();
+    if (event.key === "Escape") cancelEverywhere();
   }
 
   function onViewportChange() {
@@ -287,7 +309,7 @@
       status.textContent = text.saved;
       selectorDisplay.hidden = true;
       actions.style.display = "none";
-      setTimeout(cleanup, 1_800);
+      finishTimer = setTimeout(cancelEverywhere, 1_800);
     } catch (error) {
       status.textContent = error.message || text.error;
       protectButton.disabled = false;
@@ -300,7 +322,7 @@
   });
   nextButton.addEventListener("click", () => showSuggestion(suggestionIndex + 1));
   manualButton.addEventListener("click", beginManualSelection);
-  cancelButton.addEventListener("click", cleanup);
+  cancelButton.addEventListener("click", cancelEverywhere);
 
   document.addEventListener("pointermove", onPointerMove, true);
   document.addEventListener("pointerdown", onPagePointerDown, true);
@@ -308,6 +330,7 @@
   document.addEventListener("keydown", onKeyDown, true);
   globalThis.addEventListener("scroll", onViewportChange, true);
   globalThis.addEventListener("resize", onViewportChange, true);
+  chrome.runtime.onMessage?.addListener?.(onRuntimeMessage);
   (document.body || document.documentElement).append(host);
 
   Object.defineProperty(globalThis, pickerSymbol, {

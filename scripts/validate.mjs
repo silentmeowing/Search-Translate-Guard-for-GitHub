@@ -75,7 +75,8 @@ const requiredMessageKeys = [
   "fallbackInputLabel", "searchButton", "fallbackHint", "siteGuardActionTitle",
   "siteGuardTitle", "siteGuardBuiltInActive", "siteGuardEnable", "siteGuardSelect",
   "siteGuardClear", "siteGuardDisable", "siteGuardReloadHint", "siteGuardEnabled",
-  "siteGuardDisabled", "siteGuardRuleCount", "siteGuardObservedRisks", "siteGuardPermissionDenied",
+  "siteGuardDisabled", "siteGuardRuleCount", "siteGuardFrameCount", "siteGuardTopFrame",
+  "siteGuardChildFrame", "siteGuardObservedRisks", "siteGuardPermissionDenied",
   "siteGuardUnsupported", "siteGuardClearConfirm", "siteGuardHealthTitle",
   "siteGuardHealthIssues", "siteGuardHealthAllHealthy", "siteGuardHealthHealthy",
   "siteGuardHealthRecovering", "siteGuardHealthMissing", "siteGuardHealthAmbiguous",
@@ -127,6 +128,13 @@ for (const runtimeFile of runtimeFiles) {
     if (pattern.test(source)) {
       fail(`forbidden remote/dynamic code pattern in ${runtimeFile}: ${pattern}`);
     }
+  }
+}
+
+for (const runtimeFile of [manifest.background?.service_worker, "popup/popup.js"].filter(Boolean)) {
+  const source = fs.readFileSync(path.join(root, runtimeFile), "utf8");
+  if (/target\s*:\s*\{[^}]*\ballFrames\s*:\s*true/.test(source)) {
+    fail(`programmatic all-frame injection is forbidden in ${runtimeFile}`);
   }
 }
 

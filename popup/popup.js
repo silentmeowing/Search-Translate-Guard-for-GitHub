@@ -5,6 +5,7 @@ const elements = {
   status: document.querySelector("#status"),
   builtIn: document.querySelector("#built-in"),
   summary: document.querySelector("#summary"),
+  frames: document.querySelector("#frames"),
   observed: document.querySelector("#observed"),
   error: document.querySelector("#error"),
   ruleHealth: document.querySelector("#rule-health"),
@@ -82,23 +83,6 @@ function executeFiles(files) {
   });
 }
 
-function preparePickerRequest(ruleId) {
-  return new Promise((resolve, reject) => {
-    chrome.scripting.executeScript({
-      target: { tabId: activeTab.id },
-      func: (id) => {
-        globalThis[Symbol.for("search-translate-guard.component-picker-request")] = id
-          ? { ruleId: id }
-          : {};
-      },
-      args: [ruleId]
-    }, (results) => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else resolve(results);
-    });
-  });
-}
-
 function showError(error) {
   elements.error.textContent = error.message || String(error);
   elements.error.hidden = false;
@@ -116,6 +100,12 @@ function healthMessage(state) {
   };
   const [key, fallback] = messages[state] || messages.unavailable;
   return message(key, undefined, fallback);
+}
+
+function frameScopeMessage(frameScope) {
+  return frameScope === "child"
+    ? message("siteGuardChildFrame", undefined, "Same-origin child frame")
+    : message("siteGuardTopFrame", undefined, "Top document");
 }
 
 function renderRuleHealth(rules) {
@@ -141,6 +131,10 @@ function renderRuleHealth(rules) {
     selector.textContent = rule.selector || "?";
     selector.title = rule.selector || "";
 
+    const scope = document.createElement("p");
+    scope.className = "rule-scope";
+    scope.textContent = frameScopeMessage(rule.frameScope);
+
     const state = document.createElement("p");
     state.className = "rule-state";
     state.dataset.state = rule.state;
@@ -165,19 +159,18 @@ function renderRuleHealth(rules) {
     remove.textContent = message("siteGuardRemoveRule", undefined, "Remove");
     actions.append(remove);
 
-    item.append(selector, state, actions);
+    item.append(selector, scope, state, actions);
     elements.ruleList.append(item);
   }
 }
 
 async function openPicker(ruleId = "") {
-  await preparePickerRequest(ruleId);
-  await executeFiles([
-    "src/composed-tree.js",
-    "src/risk-detector.js",
-    "src/selector-tools.js",
-    "src/picker.js"
-  ]);
+  await sendMessage({
+    type: "site-guard:open-picker",
+    origin,
+    tabId: activeTab.id,
+    ruleId
+  });
   globalThis.close();
 }
 
@@ -197,6 +190,17 @@ async function refresh() {
     [String(status.ruleCount)],
     `${status.ruleCount} protected component rule(s)`
   );
+  const sameOriginFrameCount = Number.isInteger(status.sameOriginFrameCount)
+    ? Math.max(0, status.sameOriginFrameCount)
+    : 0;
+  elements.frames.hidden = !status.enabled || sameOriginFrameCount <= 1;
+  elements.frames.textContent = sameOriginFrameCount > 1
+    ? message(
+      "siteGuardFrameCount",
+      [String(sameOriginFrameCount)],
+      `Protection is active in ${sameOriginFrameCount} same-origin frames.`
+    )
+    : "";
   const observedRiskCount = Number.isInteger(status.observedRiskCount)
     ? Math.max(0, status.observedRiskCount)
     : 0;
