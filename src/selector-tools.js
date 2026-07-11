@@ -137,17 +137,22 @@
     return selector;
   }
 
-  function uniqueFingerprintMatch(root, fingerprint) {
-    if (!isRebindableFingerprint(fingerprint)) return null;
+  function fingerprintMatches(root, fingerprint, limit = Number.POSITIVE_INFINITY) {
+    if (!isRebindableFingerprint(fingerprint)) return [];
     const selector = candidateSelector(fingerprint);
-    if (!selector) return null;
-    let match = null;
+    if (!selector || !root?.querySelectorAll) return [];
+    const matches = [];
     for (const element of root.querySelectorAll(selector)) {
       if (!matchesFingerprint(element, fingerprint)) continue;
-      if (match) return null;
-      match = element;
+      matches.push(element);
+      if (matches.length >= limit) break;
     }
-    return match;
+    return matches;
+  }
+
+  function uniqueFingerprintMatch(root, fingerprint) {
+    const matches = fingerprintMatches(root, fingerprint, 2);
+    return matches.length === 1 ? matches[0] : null;
   }
 
   Object.defineProperty(globalThis, toolsSymbol, {
@@ -156,6 +161,7 @@
     writable: false,
     value: Object.freeze({
       fingerprintFor,
+      fingerprintMatches,
       isRebindableFingerprint,
       matchesFingerprint,
       normalizedFingerprint,
