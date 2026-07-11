@@ -14,7 +14,7 @@ The built-in adapter runs on `https://github.com/*`. It locally inspects GitHub'
 
 For other HTTP or HTTPS sites, the extension runs only after the user opens the extension, grants access to the current site, and enables protection. When the user opens the component picker, a bounded local scan scores visible structural signals such as element tags, ARIA roles and relationships, popup attributes, and framework state attributes. It does not read visible text or field values. Candidate elements and scores remain in memory only and are discarded when the picker closes.
 
-Locally stored rules contain the site's origin, a user-confirmed structural CSS selector, a non-text element fingerprint, and rule metadata. They do not contain candidate scores, input values, passwords, cookies, page contents, or visible text. These rules are used only to reapply `translate="no"` protection on that site.
+Locally stored rules contain the site's origin, a user-confirmed structural CSS selector, a non-text element fingerprint, and rule timestamps. They do not contain candidate scores, input values, passwords, cookies, page contents, or visible text. These rules are used only to reapply `translate="no"` protection on that site. If a selector stops matching, the extension may locally compare its fingerprint with structural candidates; it updates the stored selector and `reboundAt` timestamp only when one compatible candidate remains globally unique for a stability window.
 
 ## Permissions
 

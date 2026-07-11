@@ -3,7 +3,7 @@
     "message": "GitHub 搜索翻译保护器"
   },
   "extensionDescription": {
-    "message": "防止网页翻译破坏 GitHub 搜索，并在用户授权的网站上推荐需要保护的高风险组件。"
+    "message": "防止网页翻译破坏 GitHub 搜索，在授权网站推荐高风险组件，并在页面改版后修复已确认的规则。"
   },
   "fallbackTitle": {
     "message": "GitHub 搜索"
