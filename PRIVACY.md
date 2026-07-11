@@ -12,7 +12,9 @@ The extension does not collect, store, sell, share, or transmit personal informa
 
 The built-in adapter runs on `https://github.com/*`. It locally inspects GitHub's search component, the current repository search scope, and whether the search input opened successfully. When the compatibility search dialog is used, the query remains in the browser until the user submits it. The browser then navigates directly to GitHub Search.
 
-For other HTTP or HTTPS sites, the extension runs only after the user opens the extension, grants access to the current site, and enables protection. Locally stored rules contain the site's origin, a structural CSS selector, a non-text element fingerprint, and rule metadata. They do not contain input values, passwords, cookies, page contents, or visible text. These rules are used only to reapply `translate="no"` protection on that site.
+For other HTTP or HTTPS sites, the extension runs only after the user opens the extension, grants access to the current site, and enables protection. When the user opens the component picker, a bounded local scan scores visible structural signals such as element tags, ARIA roles and relationships, popup attributes, and framework state attributes. It does not read visible text or field values. Candidate elements and scores remain in memory only and are discarded when the picker closes.
+
+Locally stored rules contain the site's origin, a user-confirmed structural CSS selector, a non-text element fingerprint, and rule metadata. They do not contain candidate scores, input values, passwords, cookies, page contents, or visible text. These rules are used only to reapply `translate="no"` protection on that site.
 
 ## Permissions
 

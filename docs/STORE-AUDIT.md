@@ -8,7 +8,7 @@ Audit date: July 11, 2026
 |---|---|---|
 | `manifest_version` | `3` | Pass |
 | `name` | localized `__MSG_extensionName__` | Pass |
-| `version` | `2.2.1` | Pass |
+| `version` | `2.3.0` | Pass |
 | `description` | localized `__MSG_extensionDescription__` | Pass |
 | `default_locale` | `en` | Pass |
 | Locales | `en`, `zh_CN` | Pass |
@@ -29,7 +29,8 @@ Audit date: July 11, 2026
 - Playwright is used only in development and is not included in the extension runtime.
 - No advertising, analytics, telemetry, account system, payment, or notification feature.
 - No developer-side collection, sale, sharing, or transmission of user data.
-- Local storage contains only enabled origins, structural selectors, non-text fingerprints, and rule metadata; it never contains field values or visible page text.
+- Local structural risk candidates are computed only when the authorized-site picker opens and are not persisted or transmitted.
+- Local storage contains only enabled origins, user-confirmed structural selectors, non-text fingerprints, and rule metadata; it never contains candidate scores, field values, or visible page text.
 - Search scope and query are processed locally; submission navigates directly to GitHub.
 - Original icon; no GitHub, Microsoft, or Edge logo.
 - Non-affiliation statement is present in the README, privacy policy, and store description.
@@ -39,7 +40,7 @@ Audit date: July 11, 2026
 
 ### Single purpose
 
-Keeps interactive components usable while Microsoft Edge automatic page translation is active. GitHub search has built-in protection and a verified local fallback. On other sites, the extension acts only after the user grants access to the current site and selects a component boundary.
+Keeps interactive components usable while Microsoft Edge automatic page translation is active. GitHub search has built-in protection and a verified local fallback. On other sites, the extension acts only after the user grants access to the current site and confirms a suggested or manually selected component boundary.
 
 ### Site access justification
 
