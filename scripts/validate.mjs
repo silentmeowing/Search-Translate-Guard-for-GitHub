@@ -72,7 +72,7 @@ for (const file of requiredFiles) {
 
 const requiredMessageKeys = [
   "extensionName", "extensionDescription", "fallbackTitle", "fallbackNotice",
-  "fallbackInputLabel", "searchButton", "fallbackHint", "siteGuardActionTitle",
+  "fallbackInputLabel", "searchButton", "fallbackHint", "fallbackLauncher", "siteGuardActionTitle",
   "siteGuardTitle", "siteGuardBuiltInActive", "siteGuardEnable", "siteGuardSelect",
   "siteGuardClear", "siteGuardDisable", "siteGuardReloadHint", "siteGuardEnabled",
   "siteGuardDisabled", "siteGuardRuleCount", "siteGuardFrameCount", "siteGuardTopFrame",

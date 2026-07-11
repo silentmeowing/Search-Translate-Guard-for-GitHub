@@ -49,6 +49,8 @@ Activation of either GitHub header by pointer or `/` schedules one deduplicated 
 
 If the check fails, the adapter creates a local Shadow DOM dialog. It preserves the current `data-scope` value when present and navigates directly to GitHub's `/search?q=...` endpoint on submit.
 
+The dialog ignores backdrop clicks and closes only on Esc. Its host explicitly maps `[hidden]` to `display: none` so the closed Shadow DOM backdrop cannot intercept pointer input. A debounced, child-list-only monitor checks for visible native search triggers after DOM readiness, Turbo mutations, and viewport changes. When none remain, a protected floating launcher keeps compatibility search reachable across result navigation and repeated dismissal without polling.
+
 ## User-authorized site rules
 
 The optional site workflow has eight extension contexts:

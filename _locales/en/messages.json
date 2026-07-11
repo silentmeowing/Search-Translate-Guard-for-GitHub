@@ -20,6 +20,9 @@
   "fallbackHint": {
     "message": "Enter to search · Esc to close"
   },
+  "fallbackLauncher": {
+    "message": "Compatibility search"
+  },
   "siteGuardActionTitle": {
     "message": "Manage translation protection"
   },

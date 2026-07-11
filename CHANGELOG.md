@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## [2.8.1] - 2026-07-11
+
+### Fixed
+
+- Clicking the compatibility-search backdrop no longer dismisses the only usable search UI.
+- A hidden compatibility dialog now explicitly uses `display: none`, so its Shadow DOM backdrop cannot intercept later pointer input.
+- When GitHub no longer exposes a visible native search trigger, a protected compatibility-search launcher remains available after navigation or repeated Esc dismissal.
+
+### Validation
+
+- Added an end-to-end regression that submits one compatibility query, loads a search-results page without native search, dismisses and reopens the fallback repeatedly, and submits a second query.
+- The complete Playwright suite now contains 58 passing tests.
+
 ## [2.8.0] - 2026-07-11
 
 ### Added

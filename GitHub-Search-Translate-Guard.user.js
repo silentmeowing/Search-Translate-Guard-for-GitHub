@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Search Translate Guard for GitHub
 // @namespace    local.github-search-translate-guard
-// @version      2.8.0
+// @version      2.8.1
 // @description  Keep GitHub search usable during automatic page translation, with a local fallback dialog when needed.
 // @match        https://github.com/*
 // @run-at       document-start
@@ -234,6 +234,11 @@
 
   let fallbackHost = null;
   let fallbackInput = null;
+  let launcherHost = null;
+  let launcherContext = null;
+  let launcherTimer = null;
+  let launcherObserver = null;
+  let launcherWaitsForDom = false;
 
   function message(key, fallback) {
     try {
@@ -251,8 +256,24 @@
     ),
     inputLabel: message("fallbackInputLabel", "GitHub search query"),
     searchButton: message("searchButton", "Search"),
-    hint: message("fallbackHint", "Enter to search · Esc to close")
+    hint: message("fallbackHint", "Enter to search · Esc to close"),
+    launcher: message("fallbackLauncher", "Compatibility search")
   };
+
+  function isVisible(element) {
+    if (!(element instanceof Element) || !element.isConnected) return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 8 || rect.height <= 8) return false;
+    if (typeof element.checkVisibility === "function") {
+      return element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    }
+    const style = getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden";
+  }
+
+  function hasVisibleNativeTrigger(context) {
+    return Array.from(context.document.querySelectorAll(triggerSelector)).some(isVisible);
+  }
 
   function nativeSearchIsUsable(context) {
     return Array.from(context.document.querySelectorAll(searchRootSelector)).some((root) => {
@@ -279,6 +300,73 @@
 
   function closeFallback() {
     if (fallbackHost) fallbackHost.hidden = true;
+    if (launcherContext) scheduleLauncherUpdate(launcherContext);
+  }
+
+  function buildLauncher(context) {
+    if (launcherHost?.isConnected) return;
+
+    launcherHost = context.document.createElement("div");
+    launcherHost.id = "github-search-translate-guard-launcher";
+    launcherHost.hidden = true;
+    context.protect(launcherHost);
+    const shadow = launcherHost.attachShadow({ mode: "open" });
+    shadow.innerHTML = `
+      <style>
+        :host { all: initial; position: fixed; right: 18px; bottom: 18px; z-index: 2147483646; }
+        :host([hidden]) { display: none; }
+        button {
+          min-height: 38px; border: 1px solid rgba(31, 35, 40, .15);
+          border-radius: 999px; padding: 0 16px; cursor: pointer;
+          color: #fff; background: #0969da;
+          box-shadow: 0 8px 24px rgba(1, 4, 9, .28);
+          font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        button:focus-visible { outline: 3px solid rgba(9, 105, 218, .35); outline-offset: 2px; }
+        @media (prefers-color-scheme: dark) {
+          button { color: #0d1117; background: #58a6ff; border-color: #8c959f; }
+        }
+      </style>
+      <button type="button" aria-label="${text.launcher}">${text.launcher}</button>`;
+    const launcherButton = shadow.querySelector("button");
+    launcherButton.addEventListener("click", () => openFallback(context));
+    context.document.documentElement.append(launcherHost);
+  }
+
+  function updateLauncher(context) {
+    launcherTimer = null;
+    if (context.document.readyState === "loading") {
+      if (!launcherWaitsForDom) {
+        launcherWaitsForDom = true;
+        context.document.addEventListener("DOMContentLoaded", () => {
+          launcherWaitsForDom = false;
+          scheduleLauncherUpdate(context);
+        }, { once: true });
+      }
+      return;
+    }
+    buildLauncher(context);
+    if (!launcherHost) return;
+    const fallbackOpen = Boolean(fallbackHost?.isConnected && fallbackHost.hidden === false);
+    launcherHost.hidden = fallbackOpen || hasVisibleNativeTrigger(context);
+  }
+
+  function scheduleLauncherUpdate(context) {
+    launcherContext = context;
+    if (launcherTimer !== null) return;
+    launcherTimer = setTimeout(() => updateLauncher(context), 100);
+  }
+
+  function monitorLauncher(context) {
+    launcherContext = context;
+    if (!launcherObserver) {
+      launcherObserver = new MutationObserver(() => scheduleLauncherUpdate(context));
+      launcherObserver.observe(context.document, { childList: true, subtree: true });
+      globalThis.addEventListener("resize", () => scheduleLauncherUpdate(context), {
+        passive: true
+      });
+    }
+    scheduleLauncherUpdate(context);
   }
 
   function buildFallback(context) {
@@ -293,6 +381,7 @@
     shadow.innerHTML = `
       <style>
         :host { all: initial; }
+        :host([hidden]) { display: none; }
         .backdrop {
           position: fixed; inset: 0; z-index: 2147483647;
           display: grid; place-items: start center;
@@ -345,8 +434,6 @@
       </div>`;
 
     fallbackInput = shadow.querySelector("input");
-    const backdrop = shadow.querySelector(".backdrop");
-
     shadow.querySelector("form").addEventListener("submit", (event) => {
       event.preventDefault();
       const query = fallbackInput.value.trim();
@@ -361,10 +448,6 @@
       if (event.key === "Escape") closeFallback();
     });
 
-    backdrop.addEventListener("click", (event) => {
-      if (event.target === backdrop) closeFallback();
-    });
-
     (context.document.body || context.document.documentElement).append(fallbackHost);
   }
 
@@ -373,6 +456,7 @@
     if (!fallbackHost) return;
 
     fallbackHost.hidden = false;
+    if (launcherHost) launcherHost.hidden = true;
     const scope = currentScope(context);
     if (!fallbackInput.value && scope) fallbackInput.value = `${scope} `;
     requestAnimationFrame(() => {
@@ -385,7 +469,10 @@
     id: "github-search",
     matches: (url) => url.protocol === "https:" && url.hostname === "github.com",
     protection: {
-      select: (root) => runtime.selectWithin(root, protectedSearchSelector)
+      select: (root, context) => {
+        monitorLauncher(context);
+        return runtime.selectWithin(root, protectedSearchSelector);
+      }
     },
     beforeAttachEvents: [{
       type: "turbo:before-render",
