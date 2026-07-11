@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>React and Next.js translation mutation fixture</title>
+  </head>
+  <body>
+    <p id="outside-copy">Outside content remains translatable</p>
+    <div class="fixture-root" id="conditional-app">
+      <button id="toggle" type="button">Toggle conditional text</button>
+    </div>
+    <script>
+      const app = document.querySelector("#conditional-app");
+      const button = document.querySelector("#toggle");
+      const conditionalText = document.createTextNode("Conditional status");
+      app.insertBefore(conditionalText, button);
+      let visible = true;
+
+      button.addEventListener("click", () => {
+        try {
+          if (visible) app.removeChild(conditionalText);
+          else app.insertBefore(conditionalText, button);
+          visible = !visible;
+          globalThis.fixtureError = null;
+        } catch (error) {
+          globalThis.fixtureError = `${error.name}: ${error.message}`;
+        }
+      });
+
+      globalThis.applyTranslationMutation = () => {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        const textNodes = [];
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          const parent = node.parentElement;
+          if (
+            node.data.trim() &&
+            parent &&
+            !parent.closest('[translate="no"], .notranslate') &&
+            !parent.closest("script, style")
+          ) {
+            textNodes.push(node);
+          }
+        }
+
+        for (const node of textNodes) {
+          const translated = document.createElement("font");
+          translated.dataset.translated = "true";
+          translated.textContent = `[translated] ${node.data.trim()}`;
+          node.parentNode.replaceChild(translated, node);
+        }
+      };
+    </script>
+  </body>
+</html>

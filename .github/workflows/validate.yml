@@ -13,5 +13,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Validate manifest, locales, and package references
-        run: node scripts/validate.mjs
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install development dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Validate generated userscript and package references
+        run: npm run build:check && npm run validate
+      - name: Run browser regression tests
+        run: npm test

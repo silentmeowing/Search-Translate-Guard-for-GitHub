@@ -8,7 +8,7 @@ Audit date: July 11, 2026
 |---|---|---|
 | `manifest_version` | `3` | Pass |
 | `name` | localized `__MSG_extensionName__` | Pass |
-| `version` | `2.0.0` | Pass |
+| `version` | `2.1.0` | Pass |
 | `description` | localized `__MSG_extensionDescription__` | Pass |
 | `default_locale` | `en` | Pass |
 | Locales | `en`, `zh_CN` | Pass |
@@ -24,6 +24,7 @@ Audit date: July 11, 2026
 - Single narrow purpose: protect and recover GitHub search during page translation.
 - No remote code, dynamic import, `eval`, XMLHttpRequest, or `fetch`.
 - No obfuscation or runtime dependency.
+- Playwright is used only in development and is not included in the extension runtime.
 - No advertising, analytics, telemetry, account system, payment, or notification feature.
 - No collection, storage, sale, sharing, or developer-side transmission of user data.
 - Search scope and query are processed locally; submission navigates directly to GitHub.

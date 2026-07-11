@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Radix-style select translation mutation fixture</title>
+  </head>
+  <body>
+    <p id="outside-copy">Outside select documentation remains translatable</p>
+    <div class="fixture-root" id="select-root">
+      <button id="select-trigger" type="button"></button>
+    </div>
+    <script>
+      const root = document.querySelector("#select-root");
+      const trigger = document.querySelector("#select-trigger");
+      const label = document.createTextNode("Choose a repository");
+      trigger.append(label);
+
+      trigger.addEventListener("click", () => {
+        try {
+          trigger.removeChild(label);
+          const spinner = document.createElement("span");
+          spinner.id = "loading-indicator";
+          spinner.textContent = "Loading";
+          trigger.append(spinner);
+
+          const options = document.createElement("div");
+          options.id = "select-options";
+          options.setAttribute("role", "listbox");
+          options.innerHTML = '<button role="option" type="button">Repository one</button>';
+          root.append(options);
+          globalThis.fixtureError = null;
+        } catch (error) {
+          globalThis.fixtureError = `${error.name}: ${error.message}`;
+        }
+      });
+
+      globalThis.applyTranslationMutation = () => {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        const textNodes = [];
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          const parent = node.parentElement;
+          if (
+            node.data.trim() &&
+            parent &&
+            !parent.closest('[translate="no"], .notranslate') &&
+            !parent.closest("script, style")
+          ) {
+            textNodes.push(node);
+          }
+        }
+
+        for (const node of textNodes) {
+          const translated = document.createElement("font");
+          translated.dataset.translated = "true";
+          translated.textContent = `[translated] ${node.data.trim()}`;
+          node.parentNode.replaceChild(translated, node);
+        }
+      };
+    </script>
+  </body>
+</html>
