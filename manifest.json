@@ -1,15 +1,24 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "__MSG_extensionDescription__",
   "default_locale": "en",
-  "minimum_chrome_version": "88",
+  "minimum_chrome_version": "96",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  },
+  "action": {
+    "default_title": "__MSG_siteGuardActionTitle__",
+    "default_popup": "popup/popup.html"
   },
   "content_scripts": [
     {
