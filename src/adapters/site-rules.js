@@ -11,6 +11,9 @@
 
   const storageKey = "siteGuardConfig";
   const origin = location.origin;
+  const frameScope = globalThis.top === globalThis ? "top" : "child";
+  const allowAutomaticRebind = frameScope === "top";
+  const pickerRequestSymbol = Symbol.for("search-translate-guard.component-picker-request");
   const stateSymbol = Symbol.for(`search-translate-guard.site-rules:${origin}`);
   const existingState = globalThis[stateSymbol];
   if (existingState) {
@@ -37,11 +40,14 @@
       const id = typeof rawRule.id === "string" && rawRule.id
         ? rawRule.id
         : `legacy:${selector}`;
+      const ruleFrameScope = rawRule.frameScope === "child" ? "child" : "top";
+      if (ruleFrameScope !== frameScope) continue;
       if (ids.has(id)) continue;
       ids.add(id);
       accepted.push({
         id,
         selector,
+        frameScope: ruleFrameScope,
         fingerprint: selectorTools.normalizedFingerprint(rawRule.fingerprint)
       });
     }
@@ -177,7 +183,7 @@
 
     const candidates = selectorTools.fingerprintMatches(document, rule.fingerprint, 2);
     if (candidates.length > 1) return "ambiguous";
-    if (candidates.length === 1) return "recovering";
+    if (candidates.length === 1 && allowAutomaticRebind) return "recovering";
     return "missing";
   }
 
@@ -191,6 +197,23 @@
     };
   }
 
+  function sendFrameResponse(request, kind, snapshot) {
+    const requestId = typeof request?.requestId === "string" ? request.requestId : "";
+    if (!requestId || requestId.length > 128) return;
+    try {
+      const response = {
+        type: "site-guard:frame-response",
+        origin,
+        requestId,
+        kind
+      };
+      if (snapshot !== undefined) response.snapshot = snapshot;
+      chrome.runtime.sendMessage(response, () => void chrome.runtime.lastError);
+    } catch {
+      // Extension shutdown must not affect the protected page.
+    }
+  }
+
   function reconcileRules() {
     reconcileTimer = null;
     if (document.readyState === "loading") {
@@ -198,6 +221,7 @@
       return;
     }
     composedTree.refresh(document);
+    if (!allowAutomaticRebind) return;
 
     for (const rule of rules) {
       if (!selectorTools.isRebindableFingerprint(rule.fingerprint)) continue;
@@ -248,7 +272,7 @@
     }
     const targets = [];
     for (const rule of rules) {
-      const rebindable = selectorTools.isRebindableFingerprint(rule.fingerprint);
+      const fingerprinted = selectorTools.isRebindableFingerprint(rule.fingerprint);
       let localMatches;
       try {
         const queryRoot = selectorTools.isDeepSelector(rule.selector) ? document : root;
@@ -256,7 +280,7 @@
       } catch {
         continue;
       }
-      if (!rebindable) {
+      if (!fingerprinted) {
         for (const element of localMatches) targets.push(remember(element));
         continue;
       }
@@ -266,7 +290,10 @@
         if (globalMatches.length === 1) targets.push(remember(globalMatches[0]));
       }
     }
-    if (rules.some((rule) => selectorTools.isRebindableFingerprint(rule.fingerprint))) {
+    if (
+      allowAutomaticRebind &&
+      rules.some((rule) => selectorTools.isRebindableFingerprint(rule.fingerprint))
+    ) {
       scheduleReconcile();
     }
     return [...new Set(targets)];
@@ -331,7 +358,10 @@
         composedTree.observe(driftObserver, node, driftObserverOptions, 1_000);
       }
     }
-    if (!rules.some((rule) => selectorTools.isRebindableFingerprint(rule.fingerprint))) return;
+    if (
+      !allowAutomaticRebind ||
+      !rules.some((rule) => selectorTools.isRebindableFingerprint(rule.fingerprint))
+    ) return;
     if (records.some((record) => (
       record.type === "attributes" || record.removedNodes.length > 0
     ))) {
@@ -354,6 +384,21 @@
     }
     if (message?.type === "site-guard:get-rule-health" && message.origin === origin) {
       sendResponse(healthSnapshot());
+      return false;
+    }
+    if (message?.type === "site-guard:collect-frame-health" && message.origin === origin) {
+      sendFrameResponse(message, "health", healthSnapshot());
+      return false;
+    }
+    if (message?.type === "site-guard:prepare-frame-picker" && message.origin === origin) {
+      const requestedScope = message.frameScope === "child" ? "child"
+        : message.frameScope === "top" ? "top" : "";
+      if (requestedScope && requestedScope !== frameScope) return false;
+      const ruleId = typeof message.ruleId === "string" && message.ruleId.length <= 128
+        ? message.ruleId
+        : "";
+      globalThis[pickerRequestSymbol] = ruleId ? { ruleId } : {};
+      sendFrameResponse(message, "picker");
       return false;
     }
     return false;

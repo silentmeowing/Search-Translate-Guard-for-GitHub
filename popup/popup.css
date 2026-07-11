@@ -20,13 +20,14 @@ p { margin: 8px 0; }
 .status { font-weight: 600; }
 .built-in { padding: 8px; border-radius: 6px; color: #0550ae; background: #ddf4ff; }
 .observed { padding: 8px; border-radius: 6px; color: #7d4e00; background: #fff8c5; font-size: 12px; }
-.summary, .hint { color: #57606a; font-size: 12px; }
+.summary, .frames, .hint { color: #57606a; font-size: 12px; }
 .error { padding: 8px; border-radius: 6px; color: #cf222e; background: #ffebe9; }
 .rule-health { margin-top: 14px; padding-top: 12px; border-top: 1px solid #d8dee4; }
 .health-summary { color: #57606a; font-size: 12px; }
 .rule-list { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
 .rule-item { padding: 9px; border: 1px solid #d8dee4; border-radius: 6px; }
 .rule-item code { display: block; color: #57606a; font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-scope { margin: 4px 0 0; color: #57606a; font-size: 11px; }
 .rule-state { margin: 6px 0; font-size: 12px; }
 .rule-state:not([data-state="healthy"]) { color: #9a6700; }
 .rule-actions { display: flex; gap: 6px; }
@@ -39,7 +40,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 @media (prefers-color-scheme: dark) {
   body { color: #f0f6fc; background: #0d1117; }
-  .origin, .summary, .hint, .health-summary, .rule-item code { color: #8b949e; }
+  .origin, .summary, .frames, .hint, .health-summary, .rule-item code, .rule-scope { color: #8b949e; }
   .rule-health, .rule-item { border-color: #30363d; }
   .rule-state:not([data-state="healthy"]) { color: #d29922; }
   .built-in { color: #79c0ff; background: #0c2d6b; }

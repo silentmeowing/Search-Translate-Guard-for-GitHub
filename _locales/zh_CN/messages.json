@@ -3,7 +3,7 @@
     "message": "GitHub 搜索翻译保护器"
   },
   "extensionDescription": {
-    "message": "防止网页翻译破坏 GitHub 搜索，并在用户授权的网站发现和修复高风险交互组件，包括开放式 Shadow DOM。"
+    "message": "防止网页翻译破坏 GitHub 搜索，并在用户授权的网站保护和修复开放式 Shadow DOM 或同源 iframe 中的高风险组件。"
   },
   "fallbackTitle": {
     "message": "GitHub 搜索"
@@ -42,7 +42,7 @@
     "message": "对此网站停用"
   },
   "siteGuardReloadHint": {
-    "message": "添加或移除保护规则后，请重新加载页面。"
+    "message": "启用保护或更改规则后，请重新加载页面。"
   },
   "siteGuardEnabled": {
     "message": "用户选择的保护已启用。"
@@ -55,6 +55,18 @@
     "placeholders": {
       "count": { "content": "$1" }
     }
+  },
+  "siteGuardFrameCount": {
+    "message": "保护已在 $COUNT$ 个同源框架中生效。",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "siteGuardTopFrame": {
+    "message": "顶层文档"
+  },
+  "siteGuardChildFrame": {
+    "message": "同源子框架"
   },
   "siteGuardObservedRisks": {
     "message": "近期观察到 $COUNT$ 个高风险 DOM 改写，请检查推荐组件。",

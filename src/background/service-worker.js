@@ -6,10 +6,27 @@ const SCRIPT_PREFIX = "site-guard-";
 const CONTENT_SCRIPT_FILE = "Site-Translate-Guard.content.js";
 const MAX_RULES_PER_SITE = 50;
 const MAX_SELECTOR_LENGTH = 512;
+const MAX_SAME_ORIGIN_FRAMES = 64;
+const FRAME_RESPONSE_WINDOW_MS = 150;
+const PICKER_FILES = [
+  "src/composed-tree.js",
+  "src/risk-detector.js",
+  "src/selector-tools.js",
+  "src/picker.js"
+];
 const RULE_HEALTH_STATES = new Set([
   "healthy", "recovering", "missing", "ambiguous", "weak", "invalid"
 ]);
+const RULE_HEALTH_PRIORITY = new Map([
+  ["missing", 1],
+  ["invalid", 2],
+  ["weak", 3],
+  ["recovering", 5],
+  ["healthy", 6],
+  ["ambiguous", 7]
+]);
 let mutationQueue = Promise.resolve();
+const pendingFrameRequests = new Map();
 
 function enqueueMutation(operation) {
   const result = mutationQueue.then(operation, operation);
@@ -89,7 +106,15 @@ function preservesFingerprintIdentity(previous, next) {
   ));
 }
 
-function sanitizeRule(rule) {
+function normalizedFrameScope(value) {
+  return value === "child" ? "child" : "top";
+}
+
+function frameScopeForSender(sender) {
+  return Number.isInteger(sender?.frameId) && sender.frameId !== 0 ? "child" : "top";
+}
+
+function sanitizeRule(rule, frameScope = "top") {
   const selector = typeof rule?.selector === "string" ? rule.selector.trim() : "";
   if (!selector || selector.length > MAX_SELECTOR_LENGTH) {
     throw new Error("The component selector is missing or too long");
@@ -99,6 +124,7 @@ function sanitizeRule(rule) {
       ? rule.id
       : crypto.randomUUID(),
     selector,
+    frameScope: normalizedFrameScope(frameScope),
     fingerprint: sanitizeFingerprint(rule.fingerprint),
     createdAt: new Date().toISOString()
   };
@@ -127,6 +153,7 @@ async function registerSiteScript(origin, site) {
     id: site.scriptId,
     matches: [originPattern(origin)],
     js: [CONTENT_SCRIPT_FILE],
+    allFrames: true,
     runAt: "document_start",
     persistAcrossSessions: true
   };
@@ -141,6 +168,15 @@ async function unregisterSiteScript(scriptId) {
   if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: [scriptId] });
 }
 
+function sendTabMessage(tabId, message, options = {}) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, options, (response) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(response);
+    });
+  });
+}
+
 async function notifyRulesUpdated(tabId, origin, rules, enabled = true) {
   const tabIds = new Set(Number.isInteger(tabId) ? [tabId] : []);
   try {
@@ -151,7 +187,7 @@ async function notifyRulesUpdated(tabId, origin, rules, enabled = true) {
   } catch {
     // The initiating tab can still be updated when tab enumeration is unavailable.
   }
-  await Promise.allSettled([...tabIds].map((id) => chrome.tabs.sendMessage(id, {
+  await Promise.allSettled([...tabIds].map((id) => sendTabMessage(id, {
     type: "site-guard:rules-updated",
     origin,
     enabled,
@@ -159,27 +195,102 @@ async function notifyRulesUpdated(tabId, origin, rules, enabled = true) {
   })));
 }
 
+function collectFrameResponses(origin, tabId, kind, details = {}) {
+  const requestId = crypto.randomUUID();
+  return new Promise((resolve) => {
+    const responses = new Map();
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      pendingFrameRequests.delete(requestId);
+      resolve([...responses.values()].sort((left, right) => left.frameId - right.frameId));
+    };
+    const timer = setTimeout(finish, FRAME_RESPONSE_WINDOW_MS);
+    pendingFrameRequests.set(requestId, {
+      finish,
+      frameScope: details.frameScope || "",
+      kind,
+      origin,
+      responses,
+      tabId
+    });
+    void sendTabMessage(tabId, {
+      type: kind === "health"
+        ? "site-guard:collect-frame-health"
+        : "site-guard:prepare-frame-picker",
+      origin,
+      requestId,
+      frameScope: details.frameScope || "",
+      ruleId: details.ruleId || ""
+    }).catch(() => undefined);
+  });
+}
+
+function acceptFrameResponse(message, sender) {
+  const requestId = typeof message?.requestId === "string" ? message.requestId : "";
+  const pending = pendingFrameRequests.get(requestId);
+  if (!pending || message.kind !== pending.kind || message.origin !== pending.origin) {
+    return { accepted: false };
+  }
+  if (
+    sender?.tab?.id !== pending.tabId ||
+    !Number.isInteger(sender.frameId) ||
+    sender.frameId < 0
+  ) {
+    return { accepted: false };
+  }
+  try {
+    if (canonicalOrigin(sender.url) !== pending.origin) return { accepted: false };
+  } catch {
+    return { accepted: false };
+  }
+  const senderScope = sender.frameId === 0 ? "top" : "child";
+  if (pending.frameScope && senderScope !== pending.frameScope) {
+    return { accepted: false };
+  }
+  if (!pending.responses.has(sender.frameId) && pending.responses.size < MAX_SAME_ORIGIN_FRAMES) {
+    pending.responses.set(sender.frameId, {
+      frameId: sender.frameId,
+      frameScope: senderScope,
+      snapshot: message.snapshot
+    });
+  }
+  if (pending.responses.size >= MAX_SAME_ORIGIN_FRAMES) pending.finish();
+  return { accepted: true };
+}
+
 async function readRuntimeRuleHealth(origin, tabId) {
-  const unavailable = () => ({ states: new Map(), observedRiskCount: 0 });
+  const unavailable = () => ({
+    states: new Map(),
+    observedRiskCount: 0,
+    sameOriginFrameCount: 0
+  });
   if (!Number.isInteger(tabId)) return unavailable();
   try {
     await assertTabOrigin(origin, tabId);
-    const response = await chrome.tabs.sendMessage(tabId, {
-      type: "site-guard:get-rule-health",
-      origin
-    });
-    if (response?.origin !== origin || !Array.isArray(response.rules)) return unavailable();
+    const responses = await collectFrameResponses(origin, tabId, "health");
     const states = new Map();
-    for (const entry of response.rules.slice(0, MAX_RULES_PER_SITE)) {
-      const id = typeof entry?.id === "string" ? entry.id : "";
-      if (id && id.length <= 128 && RULE_HEALTH_STATES.has(entry.state)) {
-        states.set(id, entry.state);
+    let observedRiskCount = 0;
+    let sameOriginFrameCount = 0;
+    for (const response of responses) {
+      const snapshot = response.snapshot;
+      if (snapshot?.origin !== origin || !Array.isArray(snapshot.rules)) continue;
+      sameOriginFrameCount += 1;
+      if (Number.isInteger(snapshot.observedRiskCount)) {
+        observedRiskCount = Math.min(24, observedRiskCount + Math.max(0, snapshot.observedRiskCount));
+      }
+      for (const entry of snapshot.rules.slice(0, MAX_RULES_PER_SITE)) {
+        const id = typeof entry?.id === "string" ? entry.id : "";
+        if (!id || id.length > 128 || !RULE_HEALTH_STATES.has(entry.state)) continue;
+        const previous = states.get(id);
+        if (!previous || RULE_HEALTH_PRIORITY.get(entry.state) > RULE_HEALTH_PRIORITY.get(previous)) {
+          states.set(id, entry.state);
+        }
       }
     }
-    const observedRiskCount = Number.isInteger(response.observedRiskCount)
-      ? Math.max(0, Math.min(response.observedRiskCount, 24))
-      : 0;
-    return { states, observedRiskCount };
+    return { states, observedRiskCount, sameOriginFrameCount };
   } catch {
     return unavailable();
   }
@@ -193,7 +304,7 @@ async function siteStatus(origin, tabId) {
   const storedRules = Array.isArray(site?.rules) ? site.rules : [];
   const runtimeHealth = site?.enabled && permissionGranted
     ? await readRuntimeRuleHealth(normalizedOrigin, tabId)
-    : { states: new Map(), observedRiskCount: 0 };
+    : { states: new Map(), observedRiskCount: 0, sameOriginFrameCount: 0 };
   return {
     origin: normalizedOrigin,
     builtIn: normalizedOrigin === "https://github.com",
@@ -201,9 +312,11 @@ async function siteStatus(origin, tabId) {
     enabled: Boolean(site?.enabled && permissionGranted),
     ruleCount: storedRules.length,
     observedRiskCount: runtimeHealth.observedRiskCount,
+    sameOriginFrameCount: runtimeHealth.sameOriginFrameCount,
     rules: storedRules.map((rule) => ({
       id: rule.id,
       selector: rule.selector,
+      frameScope: normalizedFrameScope(rule.frameScope),
       state: runtimeHealth.states.get(rule.id) || "unavailable"
     }))
   };
@@ -261,8 +374,12 @@ async function addRule(origin, rule, sender) {
   const site = getOrCreateSite(config, normalizedOrigin);
   if (!site.enabled) throw new Error("Protection is not enabled for this site");
 
-  const sanitized = sanitizeRule({ ...rule, id: "" });
-  const duplicate = site.rules.find((candidate) => candidate.selector === sanitized.selector);
+  const frameScope = frameScopeForSender(sender);
+  const sanitized = sanitizeRule({ ...rule, id: "" }, frameScope);
+  const duplicate = site.rules.find((candidate) => (
+    candidate.selector === sanitized.selector &&
+    normalizedFrameScope(candidate.frameScope) === frameScope
+  ));
   if (!duplicate) {
     if (site.rules.length >= MAX_RULES_PER_SITE) {
       throw new Error("This site already has the maximum number of component rules");
@@ -293,7 +410,14 @@ async function rebindRule(origin, rule, sender) {
   if (!site.enabled) throw new Error("Protection is not enabled for this site");
   const storedRule = site.rules.find((candidate) => candidate?.id === id);
   if (!storedRule) throw new Error("The component rule no longer exists");
-  if (site.rules.some((candidate) => candidate !== storedRule && candidate?.selector === selector)) {
+  const storedFrameScope = normalizedFrameScope(storedRule.frameScope);
+  if (storedFrameScope !== "top" || frameScopeForSender(sender) !== "top") {
+    throw new Error("Automatic selector repair is limited to top-document rules");
+  }
+  if (site.rules.some((candidate) => (
+    candidate !== storedRule && candidate?.selector === selector &&
+    normalizedFrameScope(candidate?.frameScope) === storedFrameScope
+  ))) {
     throw new Error("Another component rule already uses this selector");
   }
 
@@ -325,17 +449,23 @@ async function replaceRule(origin, rule, sender) {
 
   const id = typeof rule?.id === "string" ? rule.id.trim() : "";
   if (!id || id.length > 128) throw new Error("The component rule id is invalid");
-  const replacement = sanitizeRule({ ...rule, id: "" });
-  if (!replacement.fingerprint.tag) {
-    throw new Error("The replacement component fingerprint is invalid");
-  }
-
   const config = await loadConfig();
   const site = getOrCreateSite(config, normalizedOrigin);
   if (!site.enabled) throw new Error("Protection is not enabled for this site");
   const storedRule = site.rules.find((candidate) => candidate?.id === id);
   if (!storedRule) throw new Error("The component rule no longer exists");
-  if (site.rules.some((candidate) => candidate !== storedRule && candidate?.selector === replacement.selector)) {
+  const storedFrameScope = normalizedFrameScope(storedRule.frameScope);
+  if (frameScopeForSender(sender) !== storedFrameScope) {
+    throw new Error("The replacement component does not belong to the rule's frame scope");
+  }
+  const replacement = sanitizeRule({ ...rule, id: "" }, storedFrameScope);
+  if (!replacement.fingerprint.tag) {
+    throw new Error("The replacement component fingerprint is invalid");
+  }
+  if (site.rules.some((candidate) => (
+    candidate !== storedRule && candidate?.selector === replacement.selector &&
+    normalizedFrameScope(candidate?.frameScope) === storedFrameScope
+  ))) {
     throw new Error("Another component rule already uses this selector");
   }
 
@@ -367,6 +497,56 @@ async function removeRule(origin, ruleId, tabId) {
   await saveConfig(config);
   await notifyRulesUpdated(tabId, normalizedOrigin, site.rules);
   return siteStatus(normalizedOrigin, tabId);
+}
+
+async function openPicker(origin, tabId, ruleId) {
+  const normalizedOrigin = canonicalOrigin(origin);
+  await assertTabOrigin(normalizedOrigin, tabId);
+  if (!await hasOriginPermission(normalizedOrigin)) {
+    throw new Error("Site access is no longer granted");
+  }
+
+  const config = await loadConfig();
+  const site = getOrCreateSite(config, normalizedOrigin);
+  if (!site.enabled) throw new Error("Protection is not enabled for this site");
+
+  const id = typeof ruleId === "string" ? ruleId.trim() : "";
+  if (id.length > 128) throw new Error("The component rule id is invalid");
+  const storedRule = id ? site.rules.find((candidate) => candidate?.id === id) : null;
+  if (id && !storedRule) throw new Error("The component rule no longer exists");
+  const frameScope = storedRule ? normalizedFrameScope(storedRule.frameScope) : "";
+  const frames = await collectFrameResponses(normalizedOrigin, tabId, "picker", {
+    frameScope,
+    ruleId: id
+  });
+  if (!frames.length) {
+    throw new Error("Reload the page before selecting a component in this frame");
+  }
+
+  const injections = await Promise.allSettled(frames.map(({ frameId }) => (
+    chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      files: PICKER_FILES
+    })
+  )));
+  const frameCount = injections.filter((result) => result.status === "fulfilled").length;
+  if (!frameCount) throw new Error("The component picker could not be opened");
+  return { origin: normalizedOrigin, frameCount, frameScope: frameScope || "any" };
+}
+
+async function cancelPicker(origin, sender) {
+  const normalizedOrigin = canonicalOrigin(origin);
+  assertSenderOrigin(normalizedOrigin, sender);
+  if (!Number.isInteger(sender?.tab?.id)) throw new Error("The current tab is unavailable");
+  try {
+    await sendTabMessage(sender.tab.id, {
+      type: "site-guard:cancel-picker",
+      origin: normalizedOrigin
+    });
+  } catch {
+    // The initiating frame may already have closed; cancellation remains best effort.
+  }
+  return { origin: normalizedOrigin };
 }
 
 async function reconcileRegistrations() {
@@ -419,6 +599,12 @@ async function handleMessage(message, sender) {
       return enqueueMutation(() => replaceRule(message.origin, message.rule, sender));
     case "site-guard:remove-rule":
       return enqueueMutation(() => removeRule(message.origin, message.ruleId, message.tabId));
+    case "site-guard:open-picker":
+      return openPicker(message.origin, message.tabId, message.ruleId);
+    case "site-guard:cancel-picker":
+      return cancelPicker(message.origin, sender);
+    case "site-guard:frame-response":
+      return acceptFrameResponse(message, sender);
     default:
       throw new Error("Unknown site guard message");
   }
