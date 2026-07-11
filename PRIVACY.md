@@ -18,6 +18,8 @@ Locally stored rules contain the site's origin, a user-confirmed structural CSS 
 
 When the extension popup is open, it can request an ephemeral rule-health snapshot from the active authorized tab. The page returns only rule IDs and enumerated states such as healthy, missing, or ambiguous. These states are not saved. If the user explicitly repairs a rule, the newly selected structural selector and non-text fingerprint replace that rule locally and receive a `repairedAt` timestamp.
 
+On an authorized site, the extension can observe a bounded structural mutation pattern in which an interactive component removes a text node and adds a wrapper element containing a text node. It checks node types and structural interaction attributes only, not text data. Observed candidates remain in page memory, are limited to 24, expire after 15 minutes, and are discarded when the tab closes, reloads, or site protection is disabled. The popup receives only the bounded candidate count; observed elements, scores, and reasons are not stored or transmitted.
+
 ## Permissions
 
 The extension uses `activeTab` to work with the current tab only after the user clicks the extension, `scripting` to run the component picker and protection script, and `storage` to keep the user's local site rules. GitHub remains the only statically matched site. HTTP and HTTPS origins are declared as optional host permissions and are requested one site at a time through a browser-controlled consent prompt. The user can remove a site's permission at any time.

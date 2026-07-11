@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [2.6.0] - 2026-07-11
+
+### Added
+
+- Bounded observation of recent text-node-to-wrapper DOM rewrites inside visible interactive component boundaries on user-authorized sites.
+- Ephemeral observed-risk counts in the popup and observed evidence in component suggestion ranking.
+- A shared component-boundary implementation used by structural detection, mutation observation, and manual picking.
+
+### Privacy and performance
+
+- Observation reads node types and structural interaction attributes only; it never reads or stores text content or field values.
+- Signals remain in memory, expire after 15 minutes, and are capped at 24 candidates.
+- Disabling a site or removing its permission disconnects observation and clears retained signals in existing tabs.
+- Each observer callback examines at most 200 mutation records, 100 added or removed nodes per record, and 200 descendants per candidate wrapper.
+- Background tabs, passive page copy, hidden components, and already protected subtrees are ignored.
+
+### Validation
+
+- Added deterministic coverage for interactive rewrites, passive-content exclusion, protected-boundary exclusion, observed suggestion priority, data minimization, candidate bounds, expiration, popup counts, and response sanitization.
+
 ## [2.5.0] - 2026-07-11
 
 ### Added

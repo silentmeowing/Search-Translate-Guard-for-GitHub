@@ -36,6 +36,6 @@ Each fixture first proves that the unprotected version fails, then proves that t
 
 ## Product boundary
 
-Version 2.5.0 provides an opt-in path with local structural risk suggestions, conservative selector-drift repair, user-visible rule health, and targeted explicit repair for user-authorized sites. GitHub remains the only statically matched site. Other HTTP or HTTPS sites require an explicit browser permission prompt, a user-confirmed component boundary, and a data-only local rule. The generic path provides best-effort candidate discovery, stable unique-candidate rebinding, translation isolation, and local diagnostics but does not claim to understand or recover arbitrary site behavior.
+Version 2.6.0 provides an opt-in path with local structural risk suggestions, bounded recent DOM-rewrite evidence, conservative selector-drift repair, user-visible rule health, and targeted explicit repair for user-authorized sites. GitHub remains the only statically matched site. Other HTTP or HTTPS sites require an explicit browser permission prompt, a user-confirmed component boundary, and a data-only local rule. The generic path provides best-effort candidate discovery, stable unique-candidate rebinding, translation isolation, and local diagnostics but does not claim to understand or recover arbitrary site behavior.
 
-Observed mutation-based scoring, community rules, and additional recovery adapters remain future work. They must not convert optional access into automatic all-site access or introduce remotely executable rules.
+Community rules and additional recovery adapters remain future work. They must not convert optional access into automatic all-site access or introduce remotely executable rules.
