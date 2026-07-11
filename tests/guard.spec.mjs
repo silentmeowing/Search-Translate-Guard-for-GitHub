@@ -14,6 +14,7 @@ const siteGeneratedSource = fs.readFileSync(
   "utf8"
 );
 const riskDetectorSource = fs.readFileSync(path.join(root, "src/risk-detector.js"), "utf8");
+const selectorToolsSource = fs.readFileSync(path.join(root, "src/selector-tools.js"), "utf8");
 const pickerSource = fs.readFileSync(path.join(root, "src/picker.js"), "utf8");
 
 const authenticatedGitHubFixture = `<!doctype html>
@@ -232,7 +233,15 @@ test.describe("user-authorized site rules", () => {
 globalThis.__siteGuardListeners = [];
 globalThis.chrome = {
   storage: { local: { get: async () => ({ siteGuardConfig: ${JSON.stringify(config)} }) } },
-  runtime: { onMessage: { addListener: (listener) => globalThis.__siteGuardListeners.push(listener) } }
+  runtime: {
+    lastError: null,
+    sentMessages: [],
+    sendMessage: (message, callback) => {
+      globalThis.chrome.runtime.sentMessages.push(message);
+      callback?.({ ok: true, result: message.rule });
+    },
+    onMessage: { addListener: (listener) => globalThis.__siteGuardListeners.push(listener) }
+  }
 };
 globalThis.__deliverSiteGuardMessage = (message) => {
   for (const listener of globalThis.__siteGuardListeners) listener(message);
@@ -291,6 +300,256 @@ ${siteGeneratedSource}`;
       "data-search-translate-guard-rule",
       "true"
     );
+  });
+
+  test("rebinds a stale selector only to one fingerprint match", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "drifted-rule",
+              selector: "#old-search",
+              fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <button id="old-search" type="button">Wrong old target</button>
+      <main><custom-search id="new-search" role="combobox"></custom-search></main>
+    `)}`);
+
+    await expect(page.locator("#new-search")).toHaveAttribute("translate", "no");
+    await expect(page.locator("#old-search")).not.toHaveAttribute("translate", "no");
+    const rebind = await page.evaluate(() => (
+      globalThis.chrome.runtime.sentMessages.find((message) => message.type === "site-guard:rebind-rule")
+    ));
+    expect(rebind).toMatchObject({
+      origin: "null",
+      rule: {
+        id: "drifted-rule",
+        selector: "#new-search",
+        fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+      }
+    });
+  });
+
+  test("refuses ambiguous or weak fingerprint rebinding", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [
+              {
+                id: "ambiguous-rule",
+                selector: "#missing-dialog",
+                fingerprint: { tag: "div", role: "dialog", landmark: "main" }
+              },
+              {
+                id: "weak-rule",
+                selector: "#missing-button",
+                fingerprint: { tag: "button", landmark: "main" }
+              }
+            ]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main>
+        <div id="dialog-one" role="dialog"></div>
+        <div id="dialog-two" role="dialog"></div>
+        <button id="possible-button" type="button">Possible</button>
+      </main>
+    `)}`);
+    await page.waitForTimeout(150);
+
+    await expect(page.locator("#dialog-one")).not.toHaveAttribute("translate", "no");
+    await expect(page.locator("#dialog-two")).not.toHaveAttribute("translate", "no");
+    await expect(page.locator("#possible-button")).not.toHaveAttribute("translate", "no");
+    expect(await page.evaluate(() => globalThis.chrome.runtime.sentMessages)).toEqual([]);
+  });
+
+  test("waits for a drift candidate to remain unique before rebinding", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "late-duplicate-rule",
+              selector: "#removed-dialog",
+              fingerprint: { tag: "div", role: "dialog", landmark: "main" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main><div id="early-dialog" role="dialog"></div></main>
+    `)}`);
+    await page.evaluate(() => {
+      setTimeout(() => {
+        const duplicate = document.createElement("div");
+        duplicate.id = "late-dialog";
+        duplicate.setAttribute("role", "dialog");
+        document.querySelector("main").append(duplicate);
+      }, 100);
+    });
+    await expect(page.locator("#late-dialog")).toHaveCount(1);
+    await page.waitForTimeout(350);
+
+    await expect(page.locator("#early-dialog")).not.toHaveAttribute("translate", "no");
+    await expect(page.locator("#late-dialog")).not.toHaveAttribute("translate", "no");
+    expect(await page.evaluate(() => globalThis.chrome.runtime.sentMessages)).toEqual([]);
+  });
+
+  test("restarts the stability window after transient ambiguity", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "interrupted-rule",
+              selector: "#removed-menu",
+              fingerprint: { tag: "custom-menu", role: "menu", landmark: "main" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main><custom-menu id="stable-menu" role="menu"></custom-menu></main>
+    `)}`);
+    await page.waitForTimeout(100);
+    await page.evaluate(() => {
+      const duplicate = document.createElement("custom-menu");
+      duplicate.id = "temporary-menu";
+      duplicate.setAttribute("role", "menu");
+      document.querySelector("main").append(duplicate);
+    });
+    await page.waitForTimeout(50);
+    await page.locator("#temporary-menu").evaluate((element) => element.remove());
+    await page.waitForTimeout(180);
+
+    await expect(page.locator("#stable-menu")).not.toHaveAttribute("translate", "no");
+    expect(await page.evaluate(() => globalThis.chrome.runtime.sentMessages)).toEqual([]);
+
+    await expect(page.locator("#stable-menu")).toHaveAttribute("translate", "no");
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.chrome.runtime.sentMessages.some((message) => (
+        message.type === "site-guard:rebind-rule" && message.rule.selector === "#stable-menu"
+      ))
+    ))).toBe(true);
+  });
+
+  test("rechecks a rule after attribute-only selector drift", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "renamed-rule",
+              selector: "#original-control",
+              fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main><custom-search id="original-control" role="combobox"></custom-search></main>
+    `)}`);
+    await expect(page.locator("#original-control")).toHaveAttribute("translate", "no");
+    await page.locator("#original-control").evaluate((element) => {
+      element.id = "renamed-control";
+    });
+
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.chrome.runtime.sentMessages.some((message) => (
+        message.type === "site-guard:rebind-rule" && message.rule.selector === "#renamed-control"
+      ))
+    ))).toBe(true);
+    await expect(page.locator("#renamed-control")).toHaveAttribute("translate", "no");
+  });
+
+  test("rechecks ambiguity after a duplicate is removed", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "removed-duplicate-rule",
+              selector: "#missing-listbox",
+              fingerprint: { tag: "div", role: "listbox", landmark: "main" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main>
+        <div id="remaining-listbox" role="listbox"></div>
+        <div id="removed-listbox" role="listbox"></div>
+      </main>
+    `)}`);
+    await page.waitForTimeout(350);
+    expect(await page.evaluate(() => globalThis.chrome.runtime.sentMessages)).toEqual([]);
+    await page.locator("#removed-listbox").evaluate((element) => element.remove());
+
+    await expect(page.locator("#remaining-listbox")).toHaveAttribute("translate", "no");
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.chrome.runtime.sentMessages.some((message) => (
+        message.type === "site-guard:rebind-rule" &&
+        message.rule.selector === "#remaining-listbox"
+      ))
+    ))).toBe(true);
+  });
+
+  test("rebinds a uniquely matching component inserted after load", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "dynamic-rule",
+              selector: "#removed-select",
+              fingerprint: { tag: "custom-select", role: "listbox", landmark: "main" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent("<main id=app></main>")}`);
+    await page.evaluate(() => {
+      const element = document.createElement("custom-select");
+      element.id = "replacement-select";
+      element.setAttribute("role", "listbox");
+      document.querySelector("#app").append(element);
+    });
+
+    await expect(page.locator("#replacement-select")).toHaveAttribute("translate", "no");
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.chrome.runtime.sentMessages.some((message) => (
+        message.type === "site-guard:rebind-rule" &&
+        message.rule.selector === "#replacement-select"
+      ))
+    ))).toBe(true);
   });
 });
 
@@ -352,6 +611,7 @@ globalThis.chrome = {
       </script>
     `)}`);
     await page.addScriptTag({ content: riskDetectorSource });
+    await page.addScriptTag({ content: selectorToolsSource });
     await page.addScriptTag({ content: pickerSource });
 
     await expect(page.locator("#search-translate-guard-picker button.manual")).toBeVisible();
@@ -394,6 +654,7 @@ globalThis.chrome = {
       </main>
     `)}`);
     await page.addScriptTag({ content: riskDetectorSource });
+    await page.addScriptTag({ content: selectorToolsSource });
     await page.addScriptTag({ content: pickerSource });
 
     const picker = page.locator("#search-translate-guard-picker");

@@ -3,7 +3,7 @@
     "message": "Search Translate Guard for GitHub"
   },
   "extensionDescription": {
-    "message": "Protects GitHub search during page translation and suggests protection for risky components on sites users authorize."
+    "message": "Protects GitHub search during translation, suggests risky components on authorized sites, and repairs confirmed rules after changes."
   },
   "fallbackTitle": {
     "message": "GitHub Search"

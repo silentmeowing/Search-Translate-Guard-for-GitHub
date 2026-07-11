@@ -57,6 +57,7 @@ for (const file of [
   manifest.action?.default_popup,
   "Site-Translate-Guard.content.js",
   "src/risk-detector.js",
+  "src/selector-tools.js",
   "src/picker.js",
   "popup/popup.js",
   "popup/popup.css"
@@ -101,6 +102,7 @@ const runtimeFiles = [
   "Site-Translate-Guard.content.js",
   manifest.background?.service_worker,
   "src/risk-detector.js",
+  "src/selector-tools.js",
   "src/picker.js",
   "popup/popup.js"
 ].filter(Boolean);

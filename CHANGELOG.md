@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [2.4.0] - 2026-07-11
+
+### Added
+
+- Shared selector and fingerprint tools used by both rule creation and rule recovery.
+- Conservative selector-drift rebinding for user-confirmed site rules.
+- Persistent selector updates after one fingerprint-compatible candidate remains globally unique for a stability window.
+
+### Safety
+
+- Existing non-empty fingerprint identity fields must remain unchanged during a rebind.
+- Missing, weak, ambiguous, transiently unique, cross-origin, and duplicate-selector candidates are rejected.
+- Legacy rules without a strong fingerprint continue using their saved selector and are never guessed.
+
+### Validation
+
+- Added deterministic coverage for stale selectors, wrong old targets, dynamic replacements, interrupted uniqueness, late duplicates, attribute-only drift, removal-only ambiguity resolution, ambiguous and weak fingerprints, persisted updates, and forged messages.
+
 ## [2.3.0] - 2026-07-11
 
 ### Added

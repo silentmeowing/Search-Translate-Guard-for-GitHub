@@ -3,6 +3,8 @@
 
   const pickerSymbol = Symbol.for("search-translate-guard.component-picker");
   const detectorSymbol = Symbol.for("search-translate-guard.risk-detector");
+  const selectorTools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
+  if (!selectorTools) throw new Error("Selector tools must load before the component picker");
   globalThis[pickerSymbol]?.cancel();
 
   const message = (key, fallback, substitutions) => {
@@ -83,72 +85,6 @@
   let suggestionIndex = -1;
   let finished = false;
 
-  function escapeIdentifier(value) {
-    return globalThis.CSS?.escape
-      ? CSS.escape(value)
-      : value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
-  }
-
-  function escapeAttribute(value) {
-    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  }
-
-  function isUnique(candidate) {
-    try {
-      return document.querySelectorAll(candidate).length === 1;
-    } catch {
-      return false;
-    }
-  }
-
-  function stableSegment(element) {
-    const tag = element.localName;
-    if (element.id) {
-      const candidate = `#${escapeIdentifier(element.id)}`;
-      if (isUnique(candidate)) return { value: candidate, unique: true };
-    }
-
-    for (const name of ["data-testid", "data-test", "data-target", "data-component"]) {
-      const value = element.getAttribute(name);
-      if (!value || value.length > 120) continue;
-      const candidate = `${tag}[${name}="${escapeAttribute(value)}"]`;
-      if (isUnique(candidate)) return { value: candidate, unique: true };
-    }
-
-    let value = tag;
-    for (const name of ["role", "name", "type"]) {
-      const attribute = element.getAttribute(name);
-      if (attribute && attribute.length <= 80) {
-        value += `[${name}="${escapeAttribute(attribute)}"]`;
-      }
-    }
-
-    const stableClasses = [...element.classList]
-      .filter((name) => /^[a-zA-Z][\w-]{0,40}$/.test(name))
-      .filter((name) => !/^(active|current|focus|hover|open|selected|disabled)$/i.test(name))
-      .slice(0, 2);
-    if (stableClasses.length) value += stableClasses.map((name) => `.${escapeIdentifier(name)}`).join("");
-
-    const siblings = element.parentElement
-      ? [...element.parentElement.children].filter((candidate) => candidate.localName === tag)
-      : [];
-    if (siblings.length > 1) value += `:nth-of-type(${siblings.indexOf(element) + 1})`;
-    return { value, unique: isUnique(value) };
-  }
-
-  function selectorFor(element) {
-    const parts = [];
-    let current = element;
-    for (let depth = 0; current && current !== document.documentElement && depth < 6; depth += 1) {
-      const segment = stableSegment(current);
-      parts.unshift(segment.value);
-      const candidate = parts.join(" > ");
-      if (segment.unique || isUnique(candidate)) return candidate;
-      current = current.parentElement;
-    }
-    return parts.join(" > ");
-  }
-
   function chooseBoundary(target) {
     if (!(target instanceof Element)) return null;
     if ([document.body, document.documentElement].includes(target)) return null;
@@ -170,17 +106,6 @@
       }
     }
     return [document.body, document.documentElement].includes(candidate) ? null : candidate;
-  }
-
-  function fingerprintFor(element) {
-    const landmark = element.closest("header, nav, main, form, [role=dialog], [role=main], [role=navigation]");
-    return {
-      tag: element.localName,
-      role: element.getAttribute("role") || "",
-      type: element.getAttribute("type") || "",
-      name: element.getAttribute("name") || "",
-      landmark: landmark ? landmark.localName : ""
-    };
   }
 
   function positionHighlight(element) {
@@ -208,7 +133,7 @@
 
   function showSelection(element, suggestion = null) {
     selected = element;
-    selector = selectorFor(element);
+    selector = selectorTools.selectorFor(element);
     status.textContent = suggestion
       ? suggestedStatus(suggestionIndex + 1, suggestions.length, suggestion.score)
       : text.selected;
@@ -326,7 +251,7 @@
       await sendMessage({
         type: "site-guard:add-rule",
         origin: location.origin,
-        rule: { selector, fingerprint: fingerprintFor(selected) }
+        rule: { selector, fingerprint: selectorTools.fingerprintFor(selected) }
       });
       selected.setAttribute("translate", "no");
       selected.classList.add("notranslate");

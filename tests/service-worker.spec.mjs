@@ -112,7 +112,7 @@ test.describe("site guard service worker", () => {
       const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
       expect(manifest).toMatchObject({
         manifest_version: 3,
-        version: "2.3.0",
+        version: "2.4.0",
         permissions: ["activeTab", "scripting", "storage"],
         optional_host_permissions: ["http://*/*", "https://*/*"]
       });
@@ -173,6 +173,79 @@ test.describe("site guard service worker", () => {
       tabId: 42,
       message: { type: "site-guard:rules-updated", origin: "https://example.com" }
     });
+  });
+
+  test("persists a same-origin selector rebind and rejects forged updates", async () => {
+    const harness = createWorkerHarness();
+    await harness.send({ type: "site-guard:enable", origin: "https://example.com" });
+    await harness.send({
+      type: "site-guard:add-rule",
+      origin: "https://example.com",
+      rule: {
+        selector: "#old-search",
+        fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+      }
+    }, {
+      url: "https://example.com/app",
+      tab: { id: 42 }
+    });
+    const storedRule = harness.storage.siteGuardConfig.sites["https://example.com"].rules[0];
+
+    const rebound = await harness.send({
+      type: "site-guard:rebind-rule",
+      origin: "https://example.com",
+      rule: {
+        id: storedRule.id,
+        selector: "#new-search",
+        fingerprint: {
+          tag: "custom-search",
+          role: "combobox",
+          landmark: "main",
+          text: "private translated copy"
+        }
+      }
+    }, {
+      url: "https://example.com/new-route",
+      tab: { id: 42 }
+    });
+
+    expect(rebound.ok).toBe(true);
+    expect(rebound.result).toMatchObject({
+      id: storedRule.id,
+      selector: "#new-search",
+      fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+    });
+    expect(rebound.result.reboundAt).toEqual(expect.any(String));
+    expect(JSON.stringify(rebound.result)).not.toContain("private translated copy");
+
+    const changedIdentity = await harness.send({
+      type: "site-guard:rebind-rule",
+      origin: "https://example.com",
+      rule: {
+        id: storedRule.id,
+        selector: "#different-component",
+        fingerprint: { tag: "custom-search", role: "listbox", landmark: "main" }
+      }
+    }, {
+      url: "https://example.com/new-route",
+      tab: { id: 42 }
+    });
+    expect(changedIdentity.ok).toBe(false);
+    expect(changedIdentity.error).toContain("does not match");
+
+    const forged = await harness.send({
+      type: "site-guard:rebind-rule",
+      origin: "https://example.com",
+      rule: { id: storedRule.id, selector: "#attacker-target" }
+    }, {
+      url: "https://attacker.example/page",
+      tab: { id: 7 }
+    });
+    expect(forged.ok).toBe(false);
+    expect(forged.error).toContain("does not belong");
+    expect(
+      harness.storage.siteGuardConfig.sites["https://example.com"].rules[0].selector
+    ).toBe("#new-search");
   });
 
   test("rejects cross-origin rule messages and unregisters disabled sites", async () => {
