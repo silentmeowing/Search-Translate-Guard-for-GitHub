@@ -39,9 +39,9 @@ The standard attribute communicates the boundary to translation tools. The class
 
 ## GitHub adapter
 
-The GitHub adapter selects `qbsearch-input`. A document-wide MutationObserver covers initial parsing and later additions, while `turbo:before-render` protects the detached replacement body before attachment. `turbo:render` and `turbo:load` provide follow-up scans.
+The GitHub adapter selects `qbsearch-input` and both React search triggers used by the authenticated redesigned header. Logged-out pages expose the classic `qbsearch-input` trigger directly, while logged-in pages can keep multiple hidden search templates beside separate desktop and compact responsive buttons. A document-wide MutationObserver covers initial parsing and later additions, while `turbo:before-render` protects the detached replacement body before attachment. `turbo:render` and `turbo:load` provide follow-up scans.
 
-Activation of GitHub search by pointer or `/` schedules one deduplicated check after approximately 550 ms. The native search is healthy only when the component is expanded and its query input has a visible size. A healthy native search is left untouched.
+Activation of either GitHub header by pointer or `/` schedules one deduplicated check after approximately 550 ms. The adapter checks every `qbsearch-input` instance because GitHub can render hidden templates alongside the live component. Native search is healthy when any instance is expanded and its query input has a visible size. A healthy native search is left untouched.
 
 If the check fails, the adapter creates a local Shadow DOM dialog. It preserves the current `data-scope` value when present and navigates directly to GitHub's `/search?q=...` endpoint on submit.
 

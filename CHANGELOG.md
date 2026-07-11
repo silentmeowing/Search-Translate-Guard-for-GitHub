@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.1] - 2026-07-11
+
+### Fixed
+
+- Protected the separate desktop and compact responsive React search triggers used by GitHub's authenticated redesigned header.
+- Recognized clicks on either authenticated-header trigger as recovery activations so the compatibility search still opens when the native dialog fails.
+- Checked every `qbsearch-input` instance when GitHub renders hidden templates alongside the live search component.
+
+### Validation
+
+- Added deterministic logged-in and logged-out header fixtures that reproduce the translation DOM mismatch without protection and verify desktop, compact responsive, native, and fallback paths with protection.
+
 ## [2.2.0] - 2026-07-11
 
 ### Added

@@ -8,7 +8,7 @@ Audit date: July 11, 2026
 |---|---|---|
 | `manifest_version` | `3` | Pass |
 | `name` | localized `__MSG_extensionName__` | Pass |
-| `version` | `2.2.0` | Pass |
+| `version` | `2.2.1` | Pass |
 | `description` | localized `__MSG_extensionDescription__` | Pass |
 | `default_locale` | `en` | Pass |
 | Locales | `en`, `zh_CN` | Pass |

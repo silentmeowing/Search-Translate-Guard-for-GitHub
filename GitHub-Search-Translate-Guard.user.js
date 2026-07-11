@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Search Translate Guard for GitHub
 // @namespace    local.github-search-translate-guard
-// @version      2.2.0
+// @version      2.2.1
 // @description  Keep GitHub search usable during automatic page translation, with a local fallback dialog when needed.
 // @match        https://github.com/*
 // @run-at       document-start
@@ -207,11 +207,18 @@
   if (!runtime) throw new Error("Search Translate Guard core must load before adapters");
 
   const searchRootSelector = "qbsearch-input";
+  const redesignedTriggerSelector = [
+    '[data-testid="top-nav-center"] button[aria-label^="Search or jump to"]',
+    '[data-testid="top-nav-center"] button[class*="Search-module__searchButton__"]',
+    '[data-testid="top-nav-center"] button[class*="Search-module__smallSearchButton__"]'
+  ].join(",");
+  const protectedSearchSelector = [searchRootSelector, redesignedTriggerSelector].join(",");
   const triggerSelector = [
     '[data-target="qbsearch-input.inputButton"]',
     "qbsearch-input .search-input-container",
     "qbsearch-input .header-search-button",
-    ".AppHeader-search button"
+    ".AppHeader-search button",
+    redesignedTriggerSelector
   ].join(",");
 
   let fallbackHost = null;
@@ -237,19 +244,20 @@
   };
 
   function nativeSearchIsUsable(context) {
-    const root = context.document.querySelector(searchRootSelector);
-    const input = root?.querySelector(
-      '#query-builder-test, input[role="combobox"], query-builder input'
-    );
-    const rect = input?.getBoundingClientRect();
+    return Array.from(context.document.querySelectorAll(searchRootSelector)).some((root) => {
+      const input = root.querySelector(
+        '#query-builder-test, input[role="combobox"], query-builder input'
+      );
+      const rect = input?.getBoundingClientRect();
 
-    return Boolean(
-      root?.classList.contains("expanded") &&
-      input &&
-      rect &&
-      rect.width > 40 &&
-      rect.height > 10
-    );
+      return Boolean(
+        root.classList.contains("expanded") &&
+        input &&
+        rect &&
+        rect.width > 40 &&
+        rect.height > 10
+      );
+    });
   }
 
   function currentScope(context) {
@@ -366,7 +374,7 @@
     id: "github-search",
     matches: (url) => url.protocol === "https:" && url.hostname === "github.com",
     protection: {
-      select: (root) => runtime.selectWithin(root, searchRootSelector)
+      select: (root) => runtime.selectWithin(root, protectedSearchSelector)
     },
     beforeAttachEvents: [{
       type: "turbo:before-render",

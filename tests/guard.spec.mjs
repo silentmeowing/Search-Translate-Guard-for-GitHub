@@ -15,6 +15,111 @@ const siteGeneratedSource = fs.readFileSync(
 );
 const pickerSource = fs.readFileSync(path.join(root, "src/picker.js"), "utf8");
 
+const authenticatedGitHubFixture = `<!doctype html>
+  <html><head><meta charset="utf-8"><style>
+    .d-none { display: none; }
+    #authenticated-compact-search-trigger { display: none; }
+    @media (max-width: 700px) {
+      #authenticated-search-trigger { display: none; }
+      #authenticated-compact-search-trigger { display: inline-flex; }
+    }
+  </style></head><body>
+    <header role="banner">
+      <div data-testid="top-nav-center">
+        <button
+          id="authenticated-search-trigger"
+          data-component="Button"
+          type="button"
+          aria-label="Search or jump to…"
+          class="Search-module__searchButton__fixture"
+        >
+          <span data-component="buttonContent">
+            <span id="authenticated-search-label">Type <kbd>/</kbd> to search</span>
+          </span>
+        </button>
+        <button
+          id="authenticated-compact-search-trigger"
+          data-component="IconButton"
+          type="button"
+          aria-labelledby="authenticated-compact-search-label"
+          class="Search-module__smallSearchButton__fixture"
+        >
+          <svg aria-hidden="true" class="octicon octicon-search" viewBox="0 0 16 16"></svg>
+        </button>
+        <span id="authenticated-compact-search-label" hidden>Search or jump to…</span>
+        <div class="d-none">
+          <qbsearch-input
+            id="authenticated-template-search"
+            data-scope="repo:silentmeowing/Search-Translate-Guard-for-GitHub"
+            data-header-redesign-enabled="true"
+            data-logged-in="true"
+          >
+            <input role="combobox" style="width: 240px; height: 32px">
+          </qbsearch-input>
+        </div>
+        <div id="authenticated-live-container" class="d-none">
+          <qbsearch-input
+            id="authenticated-live-search"
+            data-scope="repo:silentmeowing/Search-Translate-Guard-for-GitHub"
+            data-header-redesign-enabled="true"
+            data-logged-in="true"
+          >
+            <input role="combobox" style="width: 240px; height: 32px">
+          </qbsearch-input>
+        </div>
+      </div>
+    </header>
+    <p id="outside-copy">Repository content remains translatable</p>
+    <script>
+      (() => {
+        const trigger = document.querySelector("#authenticated-search-trigger");
+        const compactTrigger = document.querySelector("#authenticated-compact-search-trigger");
+        const label = document.querySelector("#authenticated-search-label");
+        const originalText = label.firstChild;
+        globalThis.githubFixtureError = null;
+        globalThis.githubFixtureForceFailure = false;
+
+        const activateSearch = (activeTrigger) => {
+          if (globalThis.githubFixtureForceFailure) return;
+          try {
+            label.removeChild(originalText);
+          } catch (error) {
+            globalThis.githubFixtureError = String(error);
+            if (activeTrigger === trigger) trigger.remove();
+            return;
+          }
+
+          label.prepend("Search ");
+          const container = document.querySelector("#authenticated-live-container");
+          const search = document.querySelector("#authenticated-live-search");
+          container.classList.remove("d-none");
+          search.classList.add("expanded");
+        };
+
+        trigger.addEventListener("click", () => activateSearch(trigger));
+        compactTrigger.addEventListener("click", () => activateSearch(compactTrigger));
+
+        globalThis.applyTranslationMutation = () => {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          const textNodes = [];
+          while (walker.nextNode()) textNodes.push(walker.currentNode);
+          for (const node of textNodes) {
+            const parent = node.parentElement;
+            if (
+              !parent ||
+              !node.data.trim() ||
+              parent.closest('script, style, [translate="no"], .notranslate')
+            ) continue;
+            const translated = document.createElement("font");
+            translated.dataset.translated = "true";
+            translated.textContent = "[translated] " + node.data.trim();
+            node.parentNode.replaceChild(translated, node);
+          }
+        };
+      })();
+    <\/script>
+  </body></html>`;
+
 function fixtureUrl(name) {
   return pathToFileURL(path.join(root, "tests", "fixtures", name)).href;
 }
@@ -233,15 +338,50 @@ globalThis.chrome = {
   });
 });
 
+test.describe("GitHub authenticated header regression", () => {
+  test("reproduces the translated React trigger disappearing without protection", async ({ page }) => {
+    await page.route("https://github.com/**", (route) => route.fulfill({
+      contentType: "text/html",
+      body: authenticatedGitHubFixture
+    }));
+    await page.goto("https://github.com/example/authenticated");
+
+    await page.evaluate(() => globalThis.applyTranslationMutation());
+    await page.locator("#authenticated-search-trigger").click();
+
+    expect(await page.evaluate(() => globalThis.githubFixtureError)).toContain("NotFoundError");
+    await expect(page.locator("#authenticated-search-trigger")).toHaveCount(0);
+
+    await page.setViewportSize({ width: 600, height: 800 });
+    const compactTrigger = page.locator("#authenticated-compact-search-trigger");
+    await expect(compactTrigger).toBeVisible();
+    await page.evaluate(() => {
+      globalThis.githubFixtureError = null;
+    });
+    await compactTrigger.click();
+
+    expect(await page.evaluate(() => globalThis.githubFixtureError)).toContain("NotFoundError");
+    await expect(compactTrigger).toBeVisible();
+    await expect(page.locator("#authenticated-live-search")).not.toHaveClass(/expanded/);
+  });
+});
+
 test.describe("GitHub adapter", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript({ content: generatedSource });
     await page.route("https://github.com/**", async (route) => {
+      const requestUrl = new URL(route.request().url());
       await route.fulfill({
         contentType: "text/html",
-        body: `<!doctype html>
+        body: requestUrl.pathname.endsWith("/authenticated")
+          ? authenticatedGitHubFixture
+          : `<!doctype html>
           <html><body>
-            <qbsearch-input data-scope="repo:silentmeowing/Search-Translate-Guard-for-GitHub">
+            <qbsearch-input
+              data-scope="repo:silentmeowing/Search-Translate-Guard-for-GitHub"
+              data-header-redesign-enabled="false"
+              data-logged-in="false"
+            >
               <button type="button" data-target="qbsearch-input.inputButton">Search</button>
               <input id="query-builder-test" role="combobox" style="width: 240px; height: 32px">
             </qbsearch-input>
@@ -272,6 +412,66 @@ test.describe("GitHub adapter", () => {
       return search.getAttribute("translate");
     });
     expect(protectedBeforeAttachment).toBe("no");
+  });
+
+  test("protects the authenticated React trigger and keeps native search healthy", async ({ page }) => {
+    await page.goto("https://github.com/example/authenticated");
+    const trigger = page.locator("#authenticated-search-trigger");
+
+    await expect(trigger).toHaveAttribute("translate", "no");
+    await expect(trigger).toHaveClass(/notranslate/);
+    await expect(page.locator("qbsearch-input")).toHaveCount(2);
+    expect(await page.locator("qbsearch-input").evaluateAll((elements) => (
+      elements.map((element) => element.getAttribute("translate"))
+    ))).toEqual(["no", "no"]);
+
+    await page.evaluate(() => globalThis.applyTranslationMutation());
+    await expect(page.locator("#outside-copy font[data-translated]")).toHaveCount(1);
+    await expect(trigger.locator("font[data-translated]")).toHaveCount(0);
+
+    await trigger.click();
+    expect(await page.evaluate(() => globalThis.githubFixtureError)).toBeNull();
+    await expect(trigger).toHaveCount(1);
+    await expect(page.locator("#authenticated-live-search")).toHaveClass(/expanded/);
+    await page.waitForTimeout(650);
+    await expect(page.locator("#github-search-translate-guard")).toHaveCount(0);
+  });
+
+  test("uses the compatibility search when the authenticated trigger remains unhealthy", async ({ page }) => {
+    await page.goto("https://github.com/example/authenticated");
+    await page.evaluate(() => {
+      globalThis.githubFixtureForceFailure = true;
+    });
+    await page.locator("#authenticated-search-trigger").click();
+
+    const fallback = page.locator("#github-search-translate-guard");
+    await expect(fallback.locator("input")).toBeVisible({ timeout: 1_500 });
+    await expect(fallback.locator("input")).toHaveValue(
+      "repo:silentmeowing/Search-Translate-Guard-for-GitHub "
+    );
+  });
+
+  test("protects the compact responsive trigger and recovers when it is inert", async ({ page }) => {
+    await page.goto("https://github.com/example/authenticated");
+    await page.setViewportSize({ width: 600, height: 800 });
+    const compactTrigger = page.locator("#authenticated-compact-search-trigger");
+
+    await expect(compactTrigger).toBeVisible();
+    await expect(compactTrigger).toHaveAttribute("translate", "no");
+    await expect(compactTrigger).toHaveClass(/notranslate/);
+
+    await page.evaluate(() => {
+      globalThis.applyTranslationMutation();
+      globalThis.githubFixtureForceFailure = true;
+    });
+    await expect(page.locator("#outside-copy font[data-translated]")).toHaveCount(1);
+    await compactTrigger.click();
+
+    const fallback = page.locator("#github-search-translate-guard");
+    await expect(fallback.locator("input")).toBeVisible({ timeout: 1_500 });
+    await expect(fallback.locator("input")).toHaveValue(
+      "repo:silentmeowing/Search-Translate-Guard-for-GitHub "
+    );
   });
 
   test("keeps a healthy native search and ignores slash inside editable fields", async ({ page }) => {
