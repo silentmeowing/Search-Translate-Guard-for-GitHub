@@ -74,10 +74,14 @@ const requiredMessageKeys = [
   "siteGuardTitle", "siteGuardBuiltInActive", "siteGuardEnable", "siteGuardSelect",
   "siteGuardClear", "siteGuardDisable", "siteGuardReloadHint", "siteGuardEnabled",
   "siteGuardDisabled", "siteGuardRuleCount", "siteGuardPermissionDenied",
-  "siteGuardUnsupported", "siteGuardClearConfirm", "pickerInstruction",
-  "pickerSelected", "pickerSuggested", "pickerProtect", "pickerParent",
+  "siteGuardUnsupported", "siteGuardClearConfirm", "siteGuardHealthTitle",
+  "siteGuardHealthIssues", "siteGuardHealthAllHealthy", "siteGuardHealthHealthy",
+  "siteGuardHealthRecovering", "siteGuardHealthMissing", "siteGuardHealthAmbiguous",
+  "siteGuardHealthWeak", "siteGuardHealthInvalid", "siteGuardHealthUnavailable",
+  "siteGuardRepair", "siteGuardRemoveRule", "siteGuardRemoveConfirm", "pickerInstruction",
+  "pickerRepairInstruction", "pickerSelected", "pickerSuggested", "pickerProtect", "pickerRepair", "pickerParent",
   "pickerNextSuggestion", "pickerChooseManually", "pickerCancel", "pickerSaved",
-  "pickerError"
+  "pickerRepaired", "pickerError"
 ];
 for (const locale of ["en", "zh_CN"]) {
   const messages = readJson(`_locales/${locale}/messages.json`);
