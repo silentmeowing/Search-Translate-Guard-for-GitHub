@@ -2,7 +2,7 @@
 
 Effective date: July 11, 2026
 
-Search Translate Guard for GitHub keeps GitHub search usable when automatic page translation interferes with GitHub's search interface.
+Search Translate Guard for GitHub keeps GitHub search usable when automatic page translation interferes with GitHub's search interface. It can also isolate components that the user explicitly selects on other sites after granting access to that site.
 
 ## Data collection
 
@@ -10,11 +10,15 @@ The extension does not collect, store, sell, share, or transmit personal informa
 
 ## Local processing
 
-The extension runs only on `https://github.com/*`. It locally inspects GitHub's search component, the current repository search scope, and whether the search input opened successfully. When the compatibility search dialog is used, the query remains in the browser until the user submits it. The browser then navigates directly to GitHub Search. The extension does not send the query to the developer or any separate service.
+The built-in adapter runs on `https://github.com/*`. It locally inspects GitHub's search component, the current repository search scope, and whether the search input opened successfully. When the compatibility search dialog is used, the query remains in the browser until the user submits it. The browser then navigates directly to GitHub Search.
+
+For other HTTP or HTTPS sites, the extension runs only after the user opens the extension, grants access to the current site, and enables protection. Locally stored rules contain the site's origin, a structural CSS selector, a non-text element fingerprint, and rule metadata. They do not contain input values, passwords, cookies, page contents, or visible text. These rules are used only to reapply `translate="no"` protection on that site.
 
 ## Permissions
 
-The extension requests access only to pages on `github.com` through its content-script match pattern. It does not request access to browser history, tabs, cookies, storage, downloads, identity, clipboard, or other websites.
+The extension uses `activeTab` to work with the current tab only after the user clicks the extension, `scripting` to run the component picker and protection script, and `storage` to keep the user's local site rules. GitHub remains the only statically matched site. HTTP and HTTPS origins are declared as optional host permissions and are requested one site at a time through a browser-controlled consent prompt. The user can remove a site's permission at any time.
+
+The extension does not request browser history, cookies, downloads, identity, or clipboard access.
 
 ## Remote code and third-party services
 
@@ -22,7 +26,7 @@ The extension contains no remote executable code, advertising, analytics, or thi
 
 ## Retention and deletion
 
-Because the extension does not collect or store user data, there is no developer-held user data to retain or delete. Users can remove all extension code by uninstalling the extension in Microsoft Edge.
+There is no developer-held user data to retain or delete. Users can clear a site's component rules in the extension popup, remove that site's permission, or remove all local extension data by uninstalling the extension in Microsoft Edge.
 
 ## Changes and contact
 

@@ -14,6 +14,8 @@ If private reporting is unavailable, open a minimal public issue requesting a pr
 
 - The extension contains no remote executable code or third-party runtime dependency.
 - It makes no `fetch` or XMLHttpRequest calls.
-- It requests no browser API permissions.
-- Its only site scope is `https://github.com/*`.
+- Its built-in site scope remains `https://github.com/*`; access to any other HTTP or HTTPS origin is optional and requested only after a user gesture.
+- `activeTab`, `scripting`, and `storage` are limited to the component-selection and local-rule workflow.
+- Site rules are data-only and contain no executable code, input values, passwords, or visible page text.
+- Dynamically registered scripts are removed when the user disables a site or revokes its permission.
 - User queries are sent directly to GitHub through normal browser navigation.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Search Translate Guard for GitHub
 // @namespace    local.github-search-translate-guard
-// @version      2.1.0
+// @version      2.2.0
 // @description  Keep GitHub search usable during automatic page translation, with a local fallback dialog when needed.
 // @match        https://github.com/*
 // @run-at       document-start
@@ -52,6 +52,10 @@
 
   /** @type {GuardAdapter[]} */
   const adapters = [];
+  /** @type {GuardAdapter[]} */
+  const activeAdapters = [];
+  const contexts = new Map();
+  const timers = new Map();
   let started = false;
 
   function protect(element) {
@@ -75,7 +79,6 @@
   }
 
   function registerAdapter(adapter) {
-    if (started) throw new Error("Guard adapters must be registered before start()");
     if (!adapter || typeof adapter.id !== "string" || !adapter.id) {
       throw new TypeError("Guard adapter id must be a non-empty string");
     }
@@ -86,6 +89,7 @@
       throw new TypeError(`Guard adapter ${adapter.id} is missing matches() or protection.select()`);
     }
     adapters.push(adapter);
+    if (started) activateAdapter(adapter);
   }
 
   function ruleMatches(rule, event, context) {
@@ -110,38 +114,73 @@
     return rule.when ? Boolean(rule.when(event, context)) : true;
   }
 
-  function start() {
-    if (started) return;
-    started = true;
-
-    const url = new URL(location.href);
-    const activeAdapters = adapters.filter((adapter) => adapter.matches(url));
-    if (!activeAdapters.length) return;
-
-    const contexts = new Map(activeAdapters.map((adapter) => [adapter, {
+  function contextFor(adapter) {
+    if (!contexts.has(adapter)) contexts.set(adapter, {
       document,
       location,
       protect,
       selectWithin
-    }]));
-    const timers = new Map();
+    });
+    return contexts.get(adapter);
+  }
 
-    const scan = (adapter, root) => {
-      if (
-        !(root instanceof Element) &&
-        !(root instanceof Document) &&
-        !(root instanceof DocumentFragment)
-      ) {
-        return;
-      }
+  function scan(adapter, root) {
+    if (
+      !(root instanceof Element) &&
+      !(root instanceof Document) &&
+      !(root instanceof DocumentFragment)
+    ) {
+      return;
+    }
 
-      const context = contexts.get(adapter);
-      for (const element of adapter.protection.select(root, context) ?? []) protect(element);
+    const context = contextFor(adapter);
+    for (const element of adapter.protection.select(root, context) ?? []) protect(element);
+  }
+
+  function scanAll(root) {
+    for (const adapter of activeAdapters) scan(adapter, root);
+  }
+
+  function activateAdapter(adapter) {
+    if (activeAdapters.includes(adapter) || !adapter.matches(new URL(location.href))) return;
+    activeAdapters.push(adapter);
+    const context = contextFor(adapter);
+    scan(adapter, document);
+
+    for (const hook of adapter.beforeAttachEvents ?? []) {
+      document.addEventListener(hook.type, (event) => {
+        scan(adapter, hook.root(event));
+      }, true);
+    }
+
+    for (const eventType of adapter.rescanEvents ?? []) {
+      document.addEventListener(eventType, () => scan(adapter, document), true);
+    }
+
+    if (!adapter.recovery) return;
+
+    const scheduleRecoveryCheck = () => {
+      clearTimeout(timers.get(adapter));
+      timers.set(adapter, setTimeout(() => {
+        if (!adapter.recovery.isHealthy(context)) adapter.recovery.recover(context);
+      }, adapter.recovery.delayMs));
     };
 
-    const scanAll = (root) => {
-      for (const adapter of activeAdapters) scan(adapter, root);
-    };
+    const eventTypes = new Set(
+      adapter.recovery.activationRules.flatMap((rule) => rule.events)
+    );
+    for (const eventType of eventTypes) {
+      document.addEventListener(eventType, (event) => {
+        if (adapter.recovery.activationRules.some((rule) => ruleMatches(rule, event, context))) {
+          scheduleRecoveryCheck();
+        }
+      }, true);
+    }
+  }
+
+  function start() {
+    if (started) return;
+    started = true;
 
     new MutationObserver((records) => {
       for (const record of records) {
@@ -149,41 +188,7 @@
       }
     }).observe(document, { childList: true, subtree: true });
 
-    scanAll(document);
-
-    for (const adapter of activeAdapters) {
-      for (const hook of adapter.beforeAttachEvents ?? []) {
-        document.addEventListener(hook.type, (event) => {
-          scan(adapter, hook.root(event));
-        }, true);
-      }
-
-      for (const eventType of adapter.rescanEvents ?? []) {
-        document.addEventListener(eventType, () => scan(adapter, document), true);
-      }
-
-      if (!adapter.recovery) continue;
-
-      const scheduleRecoveryCheck = () => {
-        clearTimeout(timers.get(adapter));
-        timers.set(adapter, setTimeout(() => {
-          const context = contexts.get(adapter);
-          if (!adapter.recovery.isHealthy(context)) adapter.recovery.recover(context);
-        }, adapter.recovery.delayMs));
-      };
-
-      const eventTypes = new Set(
-        adapter.recovery.activationRules.flatMap((rule) => rule.events)
-      );
-      for (const eventType of eventTypes) {
-        document.addEventListener(eventType, (event) => {
-          const context = contexts.get(adapter);
-          if (adapter.recovery.activationRules.some((rule) => ruleMatches(rule, event, context))) {
-            scheduleRecoveryCheck();
-          }
-        }, true);
-      }
-    }
+    for (const adapter of adapters) activateAdapter(adapter);
   }
 
   Object.defineProperty(globalThis, runtimeSymbol, {

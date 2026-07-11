@@ -3,7 +3,7 @@
     "message": "GitHub 搜索翻译保护器"
   },
   "extensionDescription": {
-    "message": "防止网页自动翻译破坏 GitHub 搜索；原生搜索失效时自动提供本地兼容搜索框。"
+    "message": "防止网页翻译破坏 GitHub 搜索，并允许用户在主动授权的网站上保护所选组件。"
   },
   "fallbackTitle": {
     "message": "GitHub 搜索"
@@ -19,5 +19,71 @@
   },
   "fallbackHint": {
     "message": "按 Enter 搜索 · 按 Esc 关闭"
+  },
+  "siteGuardActionTitle": {
+    "message": "管理翻译保护"
+  },
+  "siteGuardTitle": {
+    "message": "网站保护"
+  },
+  "siteGuardBuiltInActive": {
+    "message": "GitHub 内置搜索保护已启用。"
+  },
+  "siteGuardEnable": {
+    "message": "为此网站启用"
+  },
+  "siteGuardSelect": {
+    "message": "选择一个组件"
+  },
+  "siteGuardClear": {
+    "message": "清除组件规则"
+  },
+  "siteGuardDisable": {
+    "message": "对此网站停用"
+  },
+  "siteGuardReloadHint": {
+    "message": "添加或移除保护规则后，请重新加载页面。"
+  },
+  "siteGuardEnabled": {
+    "message": "用户选择的保护已启用。"
+  },
+  "siteGuardDisabled": {
+    "message": "用户选择的保护未启用。"
+  },
+  "siteGuardRuleCount": {
+    "message": "已保护 $COUNT$ 个组件规则",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "siteGuardPermissionDenied": {
+    "message": "未授予此网站的访问权限。"
+  },
+  "siteGuardUnsupported": {
+    "message": "此页面无法启用保护。"
+  },
+  "siteGuardClearConfirm": {
+    "message": "清除此网站的全部组件规则吗？"
+  },
+  "pickerInstruction": {
+    "message": "将鼠标移到组件上，然后点击以选择保护边界。"
+  },
+  "pickerSelected": {
+    "message": "已选择组件；请确认，或改选它的父级。"
+  },
+  "pickerProtect": {
+    "message": "保护此组件"
+  },
+  "pickerParent": {
+    "message": "选择父级"
+  },
+  "pickerCancel": {
+    "message": "取消"
+  },
+  "pickerSaved": {
+    "message": "保护已保存；开启网页翻译后请重新加载页面。"
+  },
+  "pickerError": {
+    "message": "无法保存此组件规则。"
   }
 }
