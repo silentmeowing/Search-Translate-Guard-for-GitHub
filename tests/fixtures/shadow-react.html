@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Open shadow translation fixture</title>
+  </head>
+  <body>
+    <main>
+      <div id="fixture-shadow-host"></div>
+      <p id="outside-copy">Outside copy remains translatable</p>
+    </main>
+    <script>
+      (() => {
+        const host = document.querySelector("#fixture-shadow-host");
+        const root = host.attachShadow({ mode: "open" });
+        root.innerHTML = `
+          <custom-toggle id="shadow-fixture-root" role="button">
+            <button id="shadow-toggle" type="button"><span id="shadow-label">Ready</span></button>
+            <span id="shadow-result"></span>
+          </custom-toggle>`;
+        const label = root.querySelector("#shadow-label");
+        const originalText = label.firstChild;
+        globalThis.fixtureError = null;
+
+        root.querySelector("#shadow-toggle").addEventListener("click", () => {
+          try {
+            label.removeChild(originalText);
+            label.append("Complete");
+            root.querySelector("#shadow-result").textContent = "updated";
+          } catch (error) {
+            globalThis.fixtureError = String(error);
+          }
+        });
+
+        globalThis.applyTranslationMutation = () => {
+          const roots = [document, root];
+          for (const currentRoot of roots) {
+            const walker = document.createTreeWalker(currentRoot, NodeFilter.SHOW_TEXT);
+            const textNodes = [];
+            while (walker.nextNode()) textNodes.push(walker.currentNode);
+            for (const node of textNodes) {
+              const parent = node.parentElement;
+              if (
+                !parent || !node.data.trim() ||
+                parent.closest('script, style, [translate="no"], .notranslate')
+              ) continue;
+              const translated = document.createElement("font");
+              translated.dataset.translated = "true";
+              translated.textContent = `[translated] ${node.data.trim()}`;
+              node.parentNode.replaceChild(translated, node);
+            }
+          }
+        };
+      })();
+    </script>
+  </body>
+</html>

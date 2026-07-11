@@ -19,7 +19,7 @@ test.describe("site guard popup", () => {
         observedRiskCount: 2,
         rules: [
           { id: "healthy-rule", selector: "#search", state: "healthy" },
-          { id: "missing-rule", selector: "main > custom-menu", state: "missing" }
+          { id: "missing-rule", selector: "#shell >>> main > custom-menu", state: "missing" }
         ]
       };
       globalThis.confirm = () => true;
@@ -68,6 +68,9 @@ test.describe("site guard popup", () => {
     );
     await expect(page.locator("#health-summary")).toHaveText("1 rule(s) need attention.");
     await expect(page.locator(".rule-item")).toHaveCount(2);
+    await expect(page.locator(".rule-item code").nth(1)).toHaveText(
+      "#shell >>> main > custom-menu"
+    );
     await expect(page.locator(".rule-state[data-state=missing]")).toHaveText(
       "No matching component was found."
     );
@@ -97,7 +100,12 @@ test.describe("site guard popup", () => {
       { args: ["missing-rule"], files: [], hasFunction: true },
       {
         args: [],
-        files: ["src/risk-detector.js", "src/selector-tools.js", "src/picker.js"],
+        files: [
+          "src/composed-tree.js",
+          "src/risk-detector.js",
+          "src/selector-tools.js",
+          "src/picker.js"
+        ],
         hasFunction: false
       }
     ]);

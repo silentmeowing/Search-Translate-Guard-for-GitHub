@@ -185,7 +185,7 @@ test.describe("site guard service worker", () => {
       type: "site-guard:add-rule",
       origin: "https://example.com",
       rule: {
-        selector: "main > custom-search[role=combobox]",
+        selector: "main > custom-shell >>> custom-search[role=combobox]",
         fingerprint: {
           tag: "custom-search",
           role: "combobox",
@@ -200,7 +200,7 @@ test.describe("site guard service worker", () => {
     expect(response.ok).toBe(true);
     expect(response.result.ruleCount).toBe(1);
     const storedRule = harness.storage.siteGuardConfig.sites["https://example.com"].rules[0];
-    expect(storedRule.selector).toBe("main > custom-search[role=combobox]");
+    expect(storedRule.selector).toBe("main > custom-shell >>> custom-search[role=combobox]");
     expect(storedRule.fingerprint).toEqual({ tag: "custom-search", role: "combobox" });
     expect(JSON.stringify(storedRule)).not.toContain("private visible page text");
     expect(harness.tabMessages.find(({ tabId }) => tabId === 42)).toMatchObject({
