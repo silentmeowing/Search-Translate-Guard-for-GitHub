@@ -209,7 +209,8 @@
   const searchRootSelector = "qbsearch-input";
   const redesignedTriggerSelector = [
     '[data-testid="top-nav-center"] button[aria-label^="Search or jump to"]',
-    '[data-testid="top-nav-center"] button[class*="Search-module__searchButton__"]'
+    '[data-testid="top-nav-center"] button[class*="Search-module__searchButton__"]',
+    '[data-testid="top-nav-center"] button[class*="Search-module__smallSearchButton__"]'
   ].join(",");
   const protectedSearchSelector = [searchRootSelector, redesignedTriggerSelector].join(",");
   const triggerSelector = [

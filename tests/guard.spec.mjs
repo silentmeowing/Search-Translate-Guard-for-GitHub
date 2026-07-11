@@ -16,7 +16,14 @@ const siteGeneratedSource = fs.readFileSync(
 const pickerSource = fs.readFileSync(path.join(root, "src/picker.js"), "utf8");
 
 const authenticatedGitHubFixture = `<!doctype html>
-  <html><head><meta charset="utf-8"><style>.d-none { display: none; }</style></head><body>
+  <html><head><meta charset="utf-8"><style>
+    .d-none { display: none; }
+    #authenticated-compact-search-trigger { display: none; }
+    @media (max-width: 700px) {
+      #authenticated-search-trigger { display: none; }
+      #authenticated-compact-search-trigger { display: inline-flex; }
+    }
+  </style></head><body>
     <header role="banner">
       <div data-testid="top-nav-center">
         <button
@@ -30,6 +37,16 @@ const authenticatedGitHubFixture = `<!doctype html>
             <span id="authenticated-search-label">Type <kbd>/</kbd> to search</span>
           </span>
         </button>
+        <button
+          id="authenticated-compact-search-trigger"
+          data-component="IconButton"
+          type="button"
+          aria-labelledby="authenticated-compact-search-label"
+          class="Search-module__smallSearchButton__fixture"
+        >
+          <svg aria-hidden="true" class="octicon octicon-search" viewBox="0 0 16 16"></svg>
+        </button>
+        <span id="authenticated-compact-search-label" hidden>Search or jump to…</span>
         <div class="d-none">
           <qbsearch-input
             id="authenticated-template-search"
@@ -56,18 +73,19 @@ const authenticatedGitHubFixture = `<!doctype html>
     <script>
       (() => {
         const trigger = document.querySelector("#authenticated-search-trigger");
+        const compactTrigger = document.querySelector("#authenticated-compact-search-trigger");
         const label = document.querySelector("#authenticated-search-label");
         const originalText = label.firstChild;
         globalThis.githubFixtureError = null;
         globalThis.githubFixtureForceFailure = false;
 
-        trigger.addEventListener("click", () => {
+        const activateSearch = (activeTrigger) => {
           if (globalThis.githubFixtureForceFailure) return;
           try {
             label.removeChild(originalText);
           } catch (error) {
             globalThis.githubFixtureError = String(error);
-            trigger.remove();
+            if (activeTrigger === trigger) trigger.remove();
             return;
           }
 
@@ -76,7 +94,10 @@ const authenticatedGitHubFixture = `<!doctype html>
           const search = document.querySelector("#authenticated-live-search");
           container.classList.remove("d-none");
           search.classList.add("expanded");
-        });
+        };
+
+        trigger.addEventListener("click", () => activateSearch(trigger));
+        compactTrigger.addEventListener("click", () => activateSearch(compactTrigger));
 
         globalThis.applyTranslationMutation = () => {
           const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -330,6 +351,18 @@ test.describe("GitHub authenticated header regression", () => {
 
     expect(await page.evaluate(() => globalThis.githubFixtureError)).toContain("NotFoundError");
     await expect(page.locator("#authenticated-search-trigger")).toHaveCount(0);
+
+    await page.setViewportSize({ width: 600, height: 800 });
+    const compactTrigger = page.locator("#authenticated-compact-search-trigger");
+    await expect(compactTrigger).toBeVisible();
+    await page.evaluate(() => {
+      globalThis.githubFixtureError = null;
+    });
+    await compactTrigger.click();
+
+    expect(await page.evaluate(() => globalThis.githubFixtureError)).toContain("NotFoundError");
+    await expect(compactTrigger).toBeVisible();
+    await expect(page.locator("#authenticated-live-search")).not.toHaveClass(/expanded/);
   });
 });
 
@@ -410,6 +443,29 @@ test.describe("GitHub adapter", () => {
       globalThis.githubFixtureForceFailure = true;
     });
     await page.locator("#authenticated-search-trigger").click();
+
+    const fallback = page.locator("#github-search-translate-guard");
+    await expect(fallback.locator("input")).toBeVisible({ timeout: 1_500 });
+    await expect(fallback.locator("input")).toHaveValue(
+      "repo:silentmeowing/Search-Translate-Guard-for-GitHub "
+    );
+  });
+
+  test("protects the compact responsive trigger and recovers when it is inert", async ({ page }) => {
+    await page.goto("https://github.com/example/authenticated");
+    await page.setViewportSize({ width: 600, height: 800 });
+    const compactTrigger = page.locator("#authenticated-compact-search-trigger");
+
+    await expect(compactTrigger).toBeVisible();
+    await expect(compactTrigger).toHaveAttribute("translate", "no");
+    await expect(compactTrigger).toHaveClass(/notranslate/);
+
+    await page.evaluate(() => {
+      globalThis.applyTranslationMutation();
+      globalThis.githubFixtureForceFailure = true;
+    });
+    await expect(page.locator("#outside-copy font[data-translated]")).toHaveCount(1);
+    await compactTrigger.click();
 
     const fallback = page.locator("#github-search-translate-guard");
     await expect(fallback.locator("input")).toBeVisible({ timeout: 1_500 });
