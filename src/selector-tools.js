@@ -3,6 +3,10 @@
 
   const toolsSymbol = Symbol.for("search-translate-guard.selector-tools");
   if (globalThis[toolsSymbol]) return;
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
+  if (!composedTree?.closest || !composedTree?.queryAll || !composedTree?.queryAllOpen) {
+    throw new Error("Composed tree support must load before selector tools");
+  }
 
   const fingerprintKeys = ["tag", "role", "type", "name", "landmark"];
 
@@ -16,26 +20,26 @@
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
-  function isUnique(candidate) {
+  function isUnique(root, candidate) {
     try {
-      return document.querySelectorAll(candidate).length === 1;
+      return root.querySelectorAll(candidate).length === 1;
     } catch {
       return false;
     }
   }
 
-  function stableSegment(element) {
+  function stableSegment(element, root) {
     const tag = element.localName;
     if (element.id) {
       const candidate = `#${escapeIdentifier(element.id)}`;
-      if (isUnique(candidate)) return { value: candidate, unique: true };
+      if (isUnique(root, candidate)) return { value: candidate, unique: true };
     }
 
     for (const name of ["data-testid", "data-test", "data-target", "data-component"]) {
       const value = element.getAttribute(name);
       if (!value || value.length > 120) continue;
       const candidate = `${tag}[${name}="${escapeAttribute(value)}"]`;
-      if (isUnique(candidate)) return { value: candidate, unique: true };
+      if (isUnique(root, candidate)) return { value: candidate, unique: true };
     }
 
     let value = tag;
@@ -58,25 +62,48 @@
       ? [...element.parentElement.children].filter((candidate) => candidate.localName === tag)
       : [];
     if (siblings.length > 1) value += `:nth-of-type(${siblings.indexOf(element) + 1})`;
-    return { value, unique: isUnique(value) };
+    return { value, unique: isUnique(root, value) };
   }
 
-  function selectorFor(element) {
-    if (!(element instanceof Element)) return "";
+  function selectorWithinRoot(element, root) {
     const parts = [];
     let current = element;
-    for (let depth = 0; current && current !== document.documentElement && depth < 6; depth += 1) {
-      const segment = stableSegment(current);
+    for (
+      let depth = 0;
+      current && current.getRootNode() === root && current !== document.documentElement && depth < 6;
+      depth += 1
+    ) {
+      const segment = stableSegment(current, root);
       parts.unshift(segment.value);
       const candidate = parts.join(" > ");
-      if (segment.unique || isUnique(candidate)) return candidate;
+      if (segment.unique || isUnique(root, candidate)) return candidate;
       current = current.parentElement;
     }
     return parts.join(" > ");
   }
 
+  function selectorFor(element) {
+    if (!(element instanceof Element)) return "";
+    const segments = [];
+    let current = element;
+    let reachedDocument = false;
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      const root = current.getRootNode();
+      if (!(root instanceof Document) && !(root instanceof ShadowRoot)) return "";
+      const selector = selectorWithinRoot(current, root);
+      if (!selector) return "";
+      segments.unshift(selector);
+      if (root instanceof Document) {
+        reachedDocument = true;
+        break;
+      }
+      current = root.host;
+    }
+    return reachedDocument ? segments.join(composedTree.deepSeparator) : "";
+  }
+
   function landmarkFor(element) {
-    const landmark = element.closest(
+    const landmark = composedTree.closest(element,
       "header, nav, main, form, [role=dialog], [role=main], [role=navigation]"
     );
     return landmark ? landmark.localName : "";
@@ -140,9 +167,9 @@
   function fingerprintMatches(root, fingerprint, limit = Number.POSITIVE_INFINITY) {
     if (!isRebindableFingerprint(fingerprint)) return [];
     const selector = candidateSelector(fingerprint);
-    if (!selector || !root?.querySelectorAll) return [];
+    if (!selector) return [];
     const matches = [];
-    for (const element of root.querySelectorAll(selector)) {
+    for (const element of composedTree.queryAllOpen(root, selector, 5_000)) {
       if (!matchesFingerprint(element, fingerprint)) continue;
       matches.push(element);
       if (matches.length >= limit) break;
@@ -162,9 +189,12 @@
     value: Object.freeze({
       fingerprintFor,
       fingerprintMatches,
+      isDeepSelector: (selector) => composedTree.selectorSegments(selector).length > 1,
       isRebindableFingerprint,
       matchesFingerprint,
       normalizedFingerprint,
+      querySelectorAll: composedTree.queryAll,
+      querySelectorAllOpen: composedTree.queryAllOpen,
       selectorFor,
       uniqueFingerprintMatch
     })

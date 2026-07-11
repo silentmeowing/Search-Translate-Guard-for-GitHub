@@ -4,14 +4,19 @@
   const observerSymbol = Symbol.for("search-translate-guard.mutation-risk-observer");
   if (globalThis[observerSymbol]) return;
 
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
   const detector = globalThis[Symbol.for("search-translate-guard.risk-detector")];
-  if (!detector?.boundaryFor || !detector?.isVisible || !detector?.score) {
-    throw new Error("Risk detector must load before mutation risk observation");
+  if (
+    !composedTree?.disconnect || !composedTree?.observe ||
+    !detector?.boundaryFor || !detector?.isVisible || !detector?.score
+  ) {
+    throw new Error("Composed tree support and risk detection must load before mutation observation");
   }
 
   const maxCandidates = 24;
   const candidateTtlMs = 15 * 60 * 1_000;
   const observations = new Map();
+  const observerOptions = { childList: true, subtree: true };
   let enabled = false;
 
   function containsTextNode(node) {
@@ -95,6 +100,9 @@
     const byTarget = new Map();
     for (const record of records.slice(0, 200)) {
       if (record.type !== "childList") continue;
+      for (const node of [...record.addedNodes].slice(0, 100)) {
+        composedTree.observe(observer, node, observerOptions, 1_000);
+      }
       const evidence = rewriteEvidence(record);
       if (!evidence.removedText && !evidence.addedWrapper) continue;
       const previous = byTarget.get(record.target) || {
@@ -109,7 +117,9 @@
       if (!evidence.removedText || !evidence.addedWrapper) continue;
       const target = mutationTarget instanceof Element
         ? mutationTarget
-        : mutationTarget.parentElement;
+        : mutationTarget instanceof ShadowRoot
+          ? mutationTarget.host
+          : mutationTarget.parentElement;
       const boundary = detector.boundaryFor(target);
       if (boundary) remember(boundary);
     }
@@ -117,6 +127,7 @@
 
   function candidates() {
     if (!enabled) return [];
+    composedTree.refresh(document);
     prune();
     return [...observations.values()]
       .sort((left, right) => right.score - left.score || right.observedAt - left.observedAt)
@@ -136,14 +147,12 @@
     if (enabled === next) return;
     enabled = next;
     if (enabled) {
-      observer.observe(document, { childList: true, subtree: true });
+      composedTree.observe(observer, document, observerOptions);
     } else {
-      observer.disconnect();
+      composedTree.disconnect(observer);
       observations.clear();
     }
   }
-
-  setEnabled(true);
 
   Object.defineProperty(globalThis, observerSymbol, {
     configurable: false,

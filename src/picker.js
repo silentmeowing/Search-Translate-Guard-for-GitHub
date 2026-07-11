@@ -5,10 +5,11 @@
   const requestSymbol = Symbol.for("search-translate-guard.component-picker-request");
   const detectorSymbol = Symbol.for("search-translate-guard.risk-detector");
   const mutationObserverSymbol = Symbol.for("search-translate-guard.mutation-risk-observer");
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
   const detector = globalThis[detectorSymbol];
   const selectorTools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
-  if (!selectorTools || !detector?.boundaryFor) {
-    throw new Error("Risk detector and selector tools must load before the component picker");
+  if (!composedTree?.parentElement || !selectorTools || !detector?.boundaryFor) {
+    throw new Error("Composed tree support, risk detector, and selector tools must load before the component picker");
   }
   globalThis[pickerSymbol]?.cancel();
   const request = globalThis[requestSymbol];
@@ -105,6 +106,10 @@
     return detector.boundaryFor(target);
   }
 
+  function pageEventTarget(event) {
+    return event.composedPath().find((node) => node instanceof Element) || event.target;
+  }
+
   function positionHighlight(element) {
     if (!element?.isConnected) {
       highlight.hidden = true;
@@ -144,7 +149,8 @@
     selectorDisplay.textContent = selector;
     selectorDisplay.hidden = false;
     actions.style.display = "flex";
-    parentButton.disabled = !element.parentElement || [document.body, document.documentElement].includes(element.parentElement);
+    const parent = composedTree.parentElement(element);
+    parentButton.disabled = !parent || [document.body, document.documentElement].includes(parent);
     nextButton.hidden = !suggestion || suggestions.length < 2;
     manualButton.hidden = !suggestion;
     positionHighlight(element);
@@ -165,11 +171,12 @@
 
   function loadSuggestions() {
     if (!detector?.detect || !detector?.score) return;
+    composedTree.refresh(document);
 
     const byBoundary = new Map();
     const include = (detected, observed = false) => {
       const boundary = chooseBoundary(detected.element);
-      if (!boundary || boundary === host) return;
+      if (!boundary || composedTree.closest(boundary, `#${host.id}`) === host) return;
       const boundaryRisk = detector.score(boundary);
       const score = Math.max(detected.score, boundaryRisk.score);
       const previous = byBoundary.get(boundary);
@@ -213,7 +220,7 @@
 
   function onPointerMove(event) {
     if (selected || event.composedPath().includes(host)) return;
-    hovered = chooseBoundary(event.target);
+    hovered = chooseBoundary(pageEventTarget(event));
     positionHighlight(hovered);
   }
 
@@ -221,7 +228,7 @@
     if (event.composedPath().includes(host)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    const boundary = hovered || chooseBoundary(event.target);
+    const boundary = hovered || chooseBoundary(pageEventTarget(event));
     if (!selected && boundary) showSelection(boundary);
   }
 
@@ -288,7 +295,8 @@
   });
 
   parentButton.addEventListener("click", () => {
-    if (selected?.parentElement) showSelection(selected.parentElement);
+    const parent = composedTree.parentElement(selected);
+    if (parent) showSelection(parent);
   });
   nextButton.addEventListener("click", () => showSuggestion(suggestionIndex + 1));
   manualButton.addEventListener("click", beginManualSelection);

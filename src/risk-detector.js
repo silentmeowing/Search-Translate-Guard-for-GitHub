@@ -3,6 +3,10 @@
 
   const detectorSymbol = Symbol.for("search-translate-guard.risk-detector");
   if (globalThis[detectorSymbol]) return;
+  const composedTree = globalThis[Symbol.for("search-translate-guard.composed-tree")];
+  if (!composedTree?.closest || !composedTree?.elements || !composedTree?.parentElement) {
+    throw new Error("Composed tree support must load before risk detection");
+  }
 
   const compositeRoles = new Set([
     "combobox", "listbox", "menu", "tree", "grid", "tablist"
@@ -35,15 +39,19 @@
   function boundaryFor(target) {
     if (!(target instanceof Element)) return null;
     if ([document.body, document.documentElement].includes(target)) return null;
-    const semantic = target.closest([
+    const semantic = composedTree.closest(target, [
       "input", "textarea", "select", "button", "[contenteditable=true]",
       "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]",
       "[role=tree]", "[role=grid]", "[role=tablist]", "[role=textbox]"
     ].join(",")) || target;
 
     let candidate = semantic;
-    let ancestor = semantic.parentElement;
-    for (let depth = 0; ancestor && depth < 3; depth += 1, ancestor = ancestor.parentElement) {
+    let ancestor = composedTree.parentElement(semantic);
+    for (
+      let depth = 0;
+      ancestor && depth < 3;
+      depth += 1, ancestor = composedTree.parentElement(ancestor)
+    ) {
       if (
         ancestor.localName.includes("-") ||
         ancestor.matches("[role=combobox], [role=listbox], [role=dialog], [role=menu], [role=tree], [role=grid], [role=tablist]")
@@ -69,10 +77,11 @@
     const role = element.getAttribute("role")?.toLowerCase() || "";
     if (tag.includes("-")) {
       addSignal(result, "custom-element", 2);
-      if (element.querySelector([
+      const descendants = composedTree.queryAllOpen(element, [
         "input", "textarea", "select", "button", "[contenteditable]",
         "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]"
-      ].join(","))) {
+      ].join(","), 2);
+      if (descendants.some((candidate) => candidate !== element)) {
         addSignal(result, "interactive-descendant", 2);
       }
     }
@@ -118,14 +127,8 @@
     const maxElements = Math.max(1, Math.min(Number(options.maxElements) || 3000, 5000));
     const maxSuggestions = Math.max(1, Math.min(Number(options.maxSuggestions) || 24, 50));
     const minimumScore = Math.max(1, Math.min(Number(options.minimumScore) || 4, 20));
-    const ownerDocument = root instanceof Document ? root : root.ownerDocument || document;
-    const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     const suggestions = [];
-    let visited = 0;
-
-    while (walker.nextNode() && visited < maxElements) {
-      visited += 1;
-      const element = walker.currentNode;
+    for (const element of composedTree.elements(root, maxElements)) {
       if (!(element instanceof Element) || !isVisible(element)) continue;
       const result = score(element);
       if (result.score < minimumScore) continue;
