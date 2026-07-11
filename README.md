@@ -108,6 +108,8 @@ For an authorized site, the popup reports whether each saved component rule is a
 
 Automatic selector repair remains conservative and identity-preserving. Explicit repair can change component identity only after a same-origin user selection. Neither path stores visible page text, input values, candidate scores, or runtime health snapshots.
 
+Authorized sites also keep a bounded, in-memory record of recent DOM rewrites that replace a text node with a wrapper inside a visible interactive component. This evidence raises the component in the local picker and shows only a count in the popup. It reads no text data, expires after 15 minutes, and never creates protection without confirmation.
+
 ## License
 
 [MIT License](LICENSE)

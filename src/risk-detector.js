@@ -28,6 +28,34 @@
   }
 
   /**
+   * Find a bounded interactive component boundary without reading text.
+   * @param {Element} target
+   * @returns {Element | null}
+   */
+  function boundaryFor(target) {
+    if (!(target instanceof Element)) return null;
+    if ([document.body, document.documentElement].includes(target)) return null;
+    const semantic = target.closest([
+      "input", "textarea", "select", "button", "[contenteditable=true]",
+      "[role=combobox]", "[role=listbox]", "[role=dialog]", "[role=menu]",
+      "[role=tree]", "[role=grid]", "[role=tablist]", "[role=textbox]"
+    ].join(",")) || target;
+
+    let candidate = semantic;
+    let ancestor = semantic.parentElement;
+    for (let depth = 0; ancestor && depth < 3; depth += 1, ancestor = ancestor.parentElement) {
+      if (
+        ancestor.localName.includes("-") ||
+        ancestor.matches("[role=combobox], [role=listbox], [role=dialog], [role=menu], [role=tree], [role=grid], [role=tablist]")
+      ) {
+        candidate = ancestor;
+        break;
+      }
+    }
+    return [document.body, document.documentElement].includes(candidate) ? null : candidate;
+  }
+
+  /**
    * Score structural interaction signals only. Visible text, field values, and
    * application data are deliberately excluded.
    * @param {Element} element
@@ -113,6 +141,6 @@
     configurable: false,
     enumerable: false,
     writable: false,
-    value: Object.freeze({ detect, score })
+    value: Object.freeze({ boundaryFor, detect, isVisible, score })
   });
 })();

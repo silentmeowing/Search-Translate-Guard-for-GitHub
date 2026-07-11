@@ -24,7 +24,13 @@ const artifacts = [
   {
     output: "Site-Translate-Guard.content.js",
     header: "// Search Translate Guard: generated opt-in site protection content script.",
-    sources: ["src/core.js", "src/selector-tools.js", "src/adapters/site-rules.js"]
+    sources: [
+      "src/core.js",
+      "src/risk-detector.js",
+      "src/mutation-risk-observer.js",
+      "src/selector-tools.js",
+      "src/adapters/site-rules.js"
+    ]
   }
 ];
 

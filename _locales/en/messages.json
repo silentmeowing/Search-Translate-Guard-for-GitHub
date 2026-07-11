@@ -3,7 +3,7 @@
     "message": "Search Translate Guard for GitHub"
   },
   "extensionDescription": {
-    "message": "Protects GitHub search during translation, finds risky components on authorized sites, and diagnoses or repairs confirmed rules."
+    "message": "Protects GitHub search during translation and helps find, diagnose, and repair risky components on user-authorized sites."
   },
   "fallbackTitle": {
     "message": "GitHub Search"
@@ -52,6 +52,12 @@
   },
   "siteGuardRuleCount": {
     "message": "$COUNT$ protected component rule(s)",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "siteGuardObservedRisks": {
+    "message": "$COUNT$ recent risky DOM rewrite(s) were observed. Review suggested components.",
     "placeholders": {
       "count": { "content": "$1" }
     }
@@ -118,6 +124,14 @@
   },
   "pickerSuggested": {
     "message": "Suggested high-risk component $INDEX$ of $TOTAL$ (score $SCORE$). Confirm it or inspect another candidate.",
+    "placeholders": {
+      "index": { "content": "$1" },
+      "total": { "content": "$2" },
+      "score": { "content": "$3" }
+    }
+  },
+  "pickerObservedSuggestion": {
+    "message": "Recent DOM text rewriting was observed in component $INDEX$ of $TOTAL$ (score $SCORE$). Confirm it or inspect another candidate.",
     "placeholders": {
       "index": { "content": "$1" },
       "total": { "content": "$2" },
