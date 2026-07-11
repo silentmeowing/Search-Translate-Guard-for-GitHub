@@ -17,9 +17,20 @@ test.describe("site guard popup", () => {
         enabled: true,
         ruleCount: 2,
         observedRiskCount: 2,
+        sameOriginFrameCount: 3,
         rules: [
-          { id: "healthy-rule", selector: "#search", state: "healthy" },
-          { id: "missing-rule", selector: "#shell >>> main > custom-menu", state: "missing" }
+          {
+            id: "healthy-rule",
+            selector: "#search",
+            frameScope: "top",
+            state: "healthy"
+          },
+          {
+            id: "missing-rule",
+            selector: "#shell >>> main > custom-menu",
+            frameScope: "child",
+            state: "missing"
+          }
         ]
       };
       globalThis.confirm = () => true;
@@ -48,7 +59,8 @@ test.describe("site guard popup", () => {
             globalThis.__scriptExecutions.push({
               args: options.args || [],
               files: options.files || [],
-              hasFunction: typeof options.func === "function"
+              hasFunction: typeof options.func === "function",
+              target: structuredClone(options.target)
             });
             callback([]);
           }
@@ -66,6 +78,9 @@ test.describe("site guard popup", () => {
     await expect(page.locator("#observed")).toHaveText(
       "2 recent risky DOM rewrite(s) were observed. Review suggested components."
     );
+    await expect(page.locator("#frames")).toHaveText(
+      "Protection is active in 3 same-origin frames."
+    );
     await expect(page.locator("#health-summary")).toHaveText("1 rule(s) need attention.");
     await expect(page.locator(".rule-item")).toHaveCount(2);
     await expect(page.locator(".rule-item code").nth(1)).toHaveText(
@@ -74,6 +89,10 @@ test.describe("site guard popup", () => {
     await expect(page.locator(".rule-state[data-state=missing]")).toHaveText(
       "No matching component was found."
     );
+    await expect(page.locator(".rule-scope")).toHaveText([
+      "Top document",
+      "Same-origin child frame"
+    ]);
 
     await page.locator('button[data-action="remove"][data-rule-id="missing-rule"]').click();
     await expect(page.locator(".rule-item")).toHaveCount(1);
@@ -94,20 +113,18 @@ test.describe("site guard popup", () => {
 
   test("starts a targeted repair picker for the selected rule", async ({ page }) => {
     await page.locator('button[data-action="repair"][data-rule-id="missing-rule"]').click();
-    await expect.poll(() => page.evaluate(() => globalThis.__scriptExecutions.length)).toBe(2);
-    const executions = await page.evaluate(() => globalThis.__scriptExecutions);
-    expect(executions).toEqual([
-      { args: ["missing-rule"], files: [], hasFunction: true },
-      {
-        args: [],
-        files: [
-          "src/composed-tree.js",
-          "src/risk-detector.js",
-          "src/selector-tools.js",
-          "src/picker.js"
-        ],
-        hasFunction: false
-      }
-    ]);
+    await expect.poll(() => page.evaluate(() => globalThis.__popupMessages.some(
+      (message) => message.type === "site-guard:open-picker"
+    ))).toBe(true);
+    const request = await page.evaluate(() => globalThis.__popupMessages.find(
+      (message) => message.type === "site-guard:open-picker"
+    ));
+    expect(request).toEqual({
+      type: "site-guard:open-picker",
+      origin: "https://example.com",
+      tabId: 42,
+      ruleId: "missing-rule"
+    });
+    expect(await page.evaluate(() => globalThis.__scriptExecutions)).toEqual([]);
   });
 });

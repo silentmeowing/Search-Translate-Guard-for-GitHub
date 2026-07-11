@@ -183,6 +183,15 @@ test.describe("generic guard core", () => {
     expect(await page.evaluate(() => globalThis.fixtureError)).toContain("NotFoundError");
   });
 
+  test("the unprotected same-origin frame reproduces a translation DOM mismatch", async ({ page }) => {
+    await page.goto(fixtureUrl("frame-host.html"));
+    const frame = page.frames().find((candidate) => candidate.url().endsWith("react-next.html"));
+    expect(frame).toBeTruthy();
+    await frame.evaluate(() => globalThis.applyTranslationMutation());
+    await frame.locator("#toggle").click();
+    expect(await frame.evaluate(() => globalThis.fixtureError)).toContain("NotFoundError");
+  });
+
   test("protects a Radix-style select while leaving surrounding copy translatable", async ({ page }) => {
     await page.addInitScript({ content: genericGuardSource() });
     await runMutationFixture(
@@ -319,6 +328,120 @@ ${siteGeneratedSource}`;
     await shadowHost.locator("#shadow-toggle").click();
     expect(await page.evaluate(() => globalThis.fixtureError)).toBeNull();
     await expect(shadowHost.locator("#shadow-result")).toHaveText("updated");
+  });
+
+  test("protects initial and dynamic components inside an authorized same-origin frame", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          "file://": {
+            enabled: true,
+            rules: [{ selector: ".fixture-root", frameScope: "child" }]
+          }
+        }
+      })
+    });
+    await page.goto(fixtureUrl("frame-host.html"));
+    const frame = page.frames().find((candidate) => candidate.url().endsWith("react-next.html"));
+    expect(frame).toBeTruthy();
+    await expect(frame.locator(".fixture-root")).toHaveAttribute("translate", "no");
+
+    await frame.evaluate(() => globalThis.applyTranslationMutation());
+    await expect(frame.locator("#outside-copy font[data-translated]")).toHaveCount(1);
+    await expect(frame.locator(".fixture-root font[data-translated]")).toHaveCount(0);
+    await frame.locator("#toggle").click();
+    expect(await frame.evaluate(() => globalThis.fixtureError)).toBeNull();
+
+    await frame.evaluate(() => {
+      const dynamic = document.createElement("div");
+      dynamic.id = "frame-dynamic";
+      dynamic.className = "fixture-root";
+      document.body.append(dynamic);
+    });
+    await expect(frame.locator("#frame-dynamic")).toHaveAttribute("translate", "no");
+  });
+
+  test("does not automatically rebind a stale child-frame rule", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          "file://": {
+            enabled: true,
+            rules: [{
+              id: "child-drift-rule",
+              selector: "#stale-child-search",
+              frameScope: "child",
+              fingerprint: { tag: "custom-search", role: "combobox" }
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(fixtureUrl("frame-host.html"));
+    const frame = page.frames().find((candidate) => candidate.url().endsWith("react-next.html"));
+    expect(frame).toBeTruthy();
+    await frame.evaluate(() => {
+      const replacement = document.createElement("custom-search");
+      replacement.id = "replacement-child-search";
+      replacement.setAttribute("role", "combobox");
+      document.body.append(replacement);
+    });
+    await page.waitForTimeout(250);
+
+    await expect(frame.locator("#replacement-child-search")).not.toHaveAttribute("translate", "no");
+    expect(await frame.evaluate(() => globalThis.chrome.runtime.sentMessages.some(
+      (message) => message.type === "site-guard:rebind-rule"
+    ))).toBe(false);
+    await expect.poll(() => frame.evaluate(() => globalThis.__requestSiteGuardMessage({
+      type: "site-guard:get-rule-health",
+      origin: "file://"
+    }))).toMatchObject({
+      rules: [{ id: "child-drift-rule", state: "missing" }]
+    });
+  });
+
+  test("reports scoped child-frame health without exposing page text", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          "file://": {
+            enabled: true,
+            rules: [{
+              id: "frame-health-rule",
+              selector: ".fixture-root",
+              frameScope: "child"
+            }]
+          }
+        }
+      })
+    });
+    await page.goto(fixtureUrl("frame-host.html"));
+    const frame = page.frames().find((candidate) => candidate.url().endsWith("react-next.html"));
+    expect(frame).toBeTruthy();
+
+    const response = await frame.evaluate(() => {
+      globalThis.__deliverSiteGuardMessage({
+        type: "site-guard:collect-frame-health",
+        origin: "file://",
+        requestId: "frame-health-request"
+      });
+      return globalThis.chrome.runtime.sentMessages.find(
+        (message) => message.type === "site-guard:frame-response"
+      );
+    });
+    expect(response).toMatchObject({
+      origin: "file://",
+      requestId: "frame-health-request",
+      kind: "health",
+      snapshot: {
+        rules: [{ id: "frame-health-rule", state: "healthy" }]
+      }
+    });
+    expect(JSON.stringify(response)).not.toContain("Conditional status");
+    expect(JSON.stringify(response)).not.toContain("selector");
   });
 
   test("protects, observes, and restores dynamic components in an open shadow root", async ({ page }) => {
