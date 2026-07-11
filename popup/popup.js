@@ -66,11 +66,11 @@ function removeOriginPermission() {
   });
 }
 
-function executeFile(file) {
+function executeFiles(files) {
   return new Promise((resolve, reject) => {
     chrome.scripting.executeScript({
       target: { tabId: activeTab.id },
-      files: [file]
+      files
     }, (results) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
       else resolve(results);
@@ -108,7 +108,7 @@ elements.enable.addEventListener("click", async () => {
     const granted = await requestOriginPermission();
     if (!granted) throw new Error(message("siteGuardPermissionDenied", undefined, "Site access was not granted."));
     await sendMessage({ type: "site-guard:enable", origin });
-    await executeFile("Site-Translate-Guard.content.js");
+    await executeFiles(["Site-Translate-Guard.content.js"]);
     await refresh();
   } catch (error) {
     showError(error);
@@ -120,7 +120,7 @@ elements.enable.addEventListener("click", async () => {
 elements.select.addEventListener("click", async () => {
   elements.error.hidden = true;
   try {
-    await executeFile("src/picker.js");
+    await executeFiles(["src/risk-detector.js", "src/picker.js"]);
     globalThis.close();
   } catch (error) {
     showError(error);

@@ -56,6 +56,7 @@ for (const file of [
   manifest.background?.service_worker,
   manifest.action?.default_popup,
   "Site-Translate-Guard.content.js",
+  "src/risk-detector.js",
   "src/picker.js",
   "popup/popup.js",
   "popup/popup.css"
@@ -73,7 +74,8 @@ const requiredMessageKeys = [
   "siteGuardClear", "siteGuardDisable", "siteGuardReloadHint", "siteGuardEnabled",
   "siteGuardDisabled", "siteGuardRuleCount", "siteGuardPermissionDenied",
   "siteGuardUnsupported", "siteGuardClearConfirm", "pickerInstruction",
-  "pickerSelected", "pickerProtect", "pickerParent", "pickerCancel", "pickerSaved",
+  "pickerSelected", "pickerSuggested", "pickerProtect", "pickerParent",
+  "pickerNextSuggestion", "pickerChooseManually", "pickerCancel", "pickerSaved",
   "pickerError"
 ];
 for (const locale of ["en", "zh_CN"]) {
@@ -98,6 +100,7 @@ const runtimeFiles = [
   scriptPath,
   "Site-Translate-Guard.content.js",
   manifest.background?.service_worker,
+  "src/risk-detector.js",
   "src/picker.js",
   "popup/popup.js"
 ].filter(Boolean);

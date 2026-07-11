@@ -2,11 +2,12 @@
   "use strict";
 
   const pickerSymbol = Symbol.for("search-translate-guard.component-picker");
+  const detectorSymbol = Symbol.for("search-translate-guard.risk-detector");
   globalThis[pickerSymbol]?.cancel();
 
-  const message = (key, fallback) => {
+  const message = (key, fallback, substitutions) => {
     try {
-      return chrome.i18n.getMessage(key) || fallback;
+      return chrome.i18n.getMessage(key, substitutions) || fallback;
     } catch {
       return fallback;
     }
@@ -17,6 +18,8 @@
     selected: message("pickerSelected", "Component selected. Confirm it or choose its parent."),
     protect: message("pickerProtect", "Protect component"),
     parent: message("pickerParent", "Choose parent"),
+    next: message("pickerNextSuggestion", "Next suggestion"),
+    manual: message("pickerChooseManually", "Choose manually"),
     cancel: message("pickerCancel", "Cancel"),
     saved: message("pickerSaved", "Protection saved. Reload after enabling page translation."),
     error: message("pickerError", "The component rule could not be saved.")
@@ -51,6 +54,8 @@
       <div class="actions">
         <button class="primary protect" type="button"></button>
         <button class="parent" type="button"></button>
+        <button class="next" type="button"></button>
+        <button class="manual" type="button"></button>
         <button class="cancel" type="button"></button>
       </div>
     </section>`;
@@ -61,15 +66,21 @@
   const actions = shadow.querySelector(".actions");
   const protectButton = shadow.querySelector(".protect");
   const parentButton = shadow.querySelector(".parent");
+  const nextButton = shadow.querySelector(".next");
+  const manualButton = shadow.querySelector(".manual");
   const cancelButton = shadow.querySelector(".cancel");
   protectButton.textContent = text.protect;
   parentButton.textContent = text.parent;
+  nextButton.textContent = text.next;
+  manualButton.textContent = text.manual;
   cancelButton.textContent = text.cancel;
   status.textContent = text.instruction;
 
   let hovered = null;
   let selected = null;
   let selector = "";
+  let suggestions = [];
+  let suggestionIndex = -1;
   let finished = false;
 
   function escapeIdentifier(value) {
@@ -187,15 +198,74 @@
     highlight.hidden = false;
   }
 
-  function showSelection(element) {
+  function suggestedStatus(index, total, score) {
+    return message(
+      "pickerSuggested",
+      `Suggested high-risk component ${index} of ${total} (score ${score}). Confirm it or inspect another candidate.`,
+      [String(index), String(total), String(score)]
+    );
+  }
+
+  function showSelection(element, suggestion = null) {
     selected = element;
     selector = selectorFor(element);
-    status.textContent = text.selected;
+    status.textContent = suggestion
+      ? suggestedStatus(suggestionIndex + 1, suggestions.length, suggestion.score)
+      : text.selected;
     selectorDisplay.textContent = selector;
     selectorDisplay.hidden = false;
     actions.style.display = "flex";
     parentButton.disabled = !element.parentElement || [document.body, document.documentElement].includes(element.parentElement);
+    nextButton.hidden = !suggestion || suggestions.length < 2;
+    manualButton.hidden = !suggestion;
     positionHighlight(element);
+  }
+
+  function showSuggestion(index) {
+    if (!suggestions.length) return false;
+    for (let offset = 0; offset < suggestions.length; offset += 1) {
+      const candidateIndex = (index + offset + suggestions.length) % suggestions.length;
+      const suggestion = suggestions[candidateIndex];
+      if (!suggestion.element.isConnected) continue;
+      suggestionIndex = candidateIndex;
+      showSelection(suggestion.element, suggestion);
+      return true;
+    }
+    return false;
+  }
+
+  function loadSuggestions() {
+    const detector = globalThis[detectorSymbol];
+    if (!detector?.detect || !detector?.score) return;
+
+    const byBoundary = new Map();
+    for (const detected of detector.detect(document)) {
+      const boundary = chooseBoundary(detected.element);
+      if (!boundary || boundary === host) continue;
+      const boundaryRisk = detector.score(boundary);
+      const score = Math.max(detected.score, boundaryRisk.score);
+      const reasons = [...new Set([...detected.reasons, ...boundaryRisk.reasons])];
+      const previous = byBoundary.get(boundary);
+      if (!previous || score > previous.score) {
+        byBoundary.set(boundary, { element: boundary, score, reasons });
+      }
+    }
+
+    suggestions = [...byBoundary.values()]
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 12);
+    showSuggestion(0);
+  }
+
+  function beginManualSelection() {
+    selected = null;
+    hovered = null;
+    selector = "";
+    suggestionIndex = -1;
+    status.textContent = text.instruction;
+    selectorDisplay.hidden = true;
+    actions.style.display = "none";
+    highlight.hidden = true;
   }
 
   function onPointerMove(event) {
@@ -273,6 +343,8 @@
   parentButton.addEventListener("click", () => {
     if (selected?.parentElement) showSelection(selected.parentElement);
   });
+  nextButton.addEventListener("click", () => showSuggestion(suggestionIndex + 1));
+  manualButton.addEventListener("click", beginManualSelection);
   cancelButton.addEventListener("click", cleanup);
 
   document.addEventListener("pointermove", onPointerMove, true);
@@ -289,4 +361,6 @@
     writable: false,
     value: Object.freeze({ cancel: cleanup })
   });
+
+  loadSuggestions();
 })();
