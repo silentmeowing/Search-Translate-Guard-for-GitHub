@@ -2,10 +2,16 @@
   "use strict";
 
   const pickerSymbol = Symbol.for("search-translate-guard.component-picker");
+  const requestSymbol = Symbol.for("search-translate-guard.component-picker-request");
   const detectorSymbol = Symbol.for("search-translate-guard.risk-detector");
   const selectorTools = globalThis[Symbol.for("search-translate-guard.selector-tools")];
   if (!selectorTools) throw new Error("Selector tools must load before the component picker");
   globalThis[pickerSymbol]?.cancel();
+  const request = globalThis[requestSymbol];
+  delete globalThis[requestSymbol];
+  const repairRuleId = typeof request?.ruleId === "string" && request.ruleId.length <= 128
+    ? request.ruleId
+    : "";
 
   const message = (key, fallback, substitutions) => {
     try {
@@ -16,14 +22,20 @@
   };
 
   const text = {
-    instruction: message("pickerInstruction", "Hover a component, then click it to select its protection boundary."),
+    instruction: repairRuleId
+      ? message("pickerRepairInstruction", "Select the replacement boundary for this unresolved rule.")
+      : message("pickerInstruction", "Hover a component, then click it to select its protection boundary."),
     selected: message("pickerSelected", "Component selected. Confirm it or choose its parent."),
-    protect: message("pickerProtect", "Protect component"),
+    protect: repairRuleId
+      ? message("pickerRepair", "Repair component rule")
+      : message("pickerProtect", "Protect component"),
     parent: message("pickerParent", "Choose parent"),
     next: message("pickerNextSuggestion", "Next suggestion"),
     manual: message("pickerChooseManually", "Choose manually"),
     cancel: message("pickerCancel", "Cancel"),
-    saved: message("pickerSaved", "Protection saved. Reload after enabling page translation."),
+    saved: repairRuleId
+      ? message("pickerRepaired", "Component rule repaired.")
+      : message("pickerSaved", "Protection saved. Reload after enabling page translation."),
     error: message("pickerError", "The component rule could not be saved.")
   };
 
@@ -249,9 +261,13 @@
     protectButton.disabled = true;
     try {
       await sendMessage({
-        type: "site-guard:add-rule",
+        type: repairRuleId ? "site-guard:replace-rule" : "site-guard:add-rule",
         origin: location.origin,
-        rule: { selector, fingerprint: selectorTools.fingerprintFor(selected) }
+        rule: {
+          ...(repairRuleId ? { id: repairRuleId } : {}),
+          selector,
+          fingerprint: selectorTools.fingerprintFor(selected)
+        }
       });
       selected.setAttribute("translate", "no");
       selected.classList.add("notranslate");

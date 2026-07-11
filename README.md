@@ -102,6 +102,12 @@ npm run check
 
 本项目是独立第三方扩展，与 GitHub、Microsoft 或 Microsoft Edge 不存在隶属、认可或赞助关系。GitHub 和 Microsoft Edge 的名称仅用于准确说明兼容对象。项目图标为原创，不使用 GitHub、Microsoft 或 Edge 官方标志。
 
+## Rule health and repair
+
+For an authorized site, the popup reports whether each saved component rule is active, recovering, missing, ambiguous, based on a weak legacy fingerprint, invalid, or temporarily unavailable. These diagnostics are requested only from the active tab while the popup is open and are not saved. An unresolved rule can be repaired by explicitly selecting a replacement component, or removed without clearing the site's other rules.
+
+Automatic selector repair remains conservative and identity-preserving. Explicit repair can change component identity only after a same-origin user selection. Neither path stores visible page text, input values, candidate scores, or runtime health snapshots.
+
 ## License
 
 [MIT License](LICENSE)

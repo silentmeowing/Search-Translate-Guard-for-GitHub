@@ -50,7 +50,7 @@ If the check fails, the adapter creates a local Shadow DOM dialog. It preserves 
 
 The optional site workflow has six extension contexts:
 
-1. `popup/` displays the current origin and asks the user to grant, inspect, or remove protection.
+1. `popup/` displays the current origin, reads ephemeral health from the active tab, and lets the user grant, repair, or remove protection.
 2. `src/background/service-worker.js` validates messages, stores versioned data-only rules, and registers one persistent `document_start` script per authorized origin.
 3. `src/risk-detector.js` performs a bounded, user-initiated scan of visible structural interaction signals and returns ranked in-memory candidates.
 4. `src/selector-tools.js` gives creation and recovery one implementation for selectors and fingerprints.
@@ -66,6 +66,12 @@ The detector scores custom elements, composite ARIA roles, dialogs and popovers,
 The picker maps candidates to bounded component roots, deduplicates them, and displays at most 12 ranked suggestions. It favors IDs and stable data attributes, then builds a bounded structural selector from roles, names, types, stable classes, and ancestry. Users can cycle suggestions, move the selected boundary to a parent, or return to manual selection before confirming.
 
 When a confirmed selector stops matching, or matches an element that no longer agrees with its stored fingerprint, the site-rule adapter may repair the binding. Rebinding requires a sufficiently strong fingerprint, exactly one compatible candidate across the complete document, and the same candidate remaining unique for at least 250 ms without intervening DOM additions. A lightweight observer schedules re-evaluation for removals and selector/fingerprint attribute changes. Existing non-empty identity fields must match exactly. Ambiguous, weak, transient, cross-origin, missing-rule, and duplicate-selector updates are rejected. A successful update stores only the new structural selector, compatible fingerprint, and a `reboundAt` timestamp.
+
+The popup requests a health snapshot from the active authorized tab only while it is open. Each rule is classified as healthy, recovering, missing, ambiguous, weak, invalid, or unavailable. The response contains only the rule ID and state; the service worker combines it with the already stored structural selector for display. Health snapshots, candidate counts, and page content are not persisted. An unresolved rule can be explicitly repaired by reopening the local picker with that rule ID. This user-confirmed replacement may change the fingerprint identity, is validated against the sender origin, and stores a `repairedAt` timestamp. Automatic rebinding remains identity-preserving and uses at most three exponentially delayed retries after transient background failures.
+
+All configuration mutations share one service-worker queue. Concurrent picker confirmations, selector rebinds, removals, permission changes, and startup reconciliation therefore perform their read-modify-write cycles in order instead of overwriting another rule with stale storage state.
+
+After a rule mutation, the service worker broadcasts the complete local rule set to open tabs matching the authorized hostname. Each content script verifies the exact origin before applying it, so same-host tabs on other ports ignore the update. This keeps existing tabs synchronized without requesting the broad `tabs` permission.
 
 ```text
 Page or framework adds candidate content
@@ -95,6 +101,8 @@ User opens extension on another site
                                             +--> stale selector
                                                     |
                                                     +--> stable unique fingerprint match --> local selector repair
+                                                    |
+                                                    +--> unresolved --> popup diagnosis --> user-confirmed replacement
 ```
 
 ## Security and scope
@@ -102,7 +110,7 @@ User opens extension on another site
 - The manifest statically matches only `https://github.com/*`. `activeTab`, `scripting`, and `storage` support the explicit user workflow; other HTTP and HTTPS hosts remain optional permissions.
 - The extension does not patch global DOM prototypes. Silencing invalid `removeChild` or `insertBefore` calls can leave stale or missing UI without repairing application state.
 - There is no developer server, analytics endpoint, remote script, or runtime dependency.
-- Local extension storage contains only origin-scoped structural rules and rule timestamps, never page text, field values, or ephemeral candidate scores.
+- Local extension storage contains only origin-scoped structural rules and rule timestamps, never page text, field values, ephemeral candidate scores, or runtime health snapshots.
 - Playwright is a development-only dependency and is not referenced by the extension manifest or generated userscript.
 
 ## Limitations
@@ -110,6 +118,6 @@ User opens extension on another site
 - Future GitHub redesigns may require adapter selector or health-check updates.
 - The fallback intentionally provides direct query submission, not native suggestions or saved searches.
 - `translate="no"` is a request to translation systems, not a guarantee that every third-party translator will respect the boundary.
-- Generic scoring is a best-effort structural heuristic, not proof that every risky component was found. Generic rules prevent translation inside a confirmed boundary; they do not infer business semantics or provide automatic recovery UI.
-- Selector rebinding is deliberately conservative; ambiguous or weak rules remain unresolved and require user confirmation through the picker.
+- Generic scoring is a best-effort structural heuristic, not proof that every risky component was found. Generic rules prevent translation inside a confirmed boundary; they do not infer business semantics or provide site-specific fallback UI.
+- Selector rebinding is deliberately conservative; the popup reports ambiguous or weak rules and requires user confirmation through the targeted repair picker.
 - Closed shadow roots and cross-origin frames cannot be selected from the top-level page without separate support and permissions.

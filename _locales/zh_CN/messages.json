@@ -3,7 +3,7 @@
     "message": "GitHub 搜索翻译保护器"
   },
   "extensionDescription": {
-    "message": "防止网页翻译破坏 GitHub 搜索，在授权网站推荐高风险组件，并在页面改版后修复已确认的规则。"
+    "message": "防止网页翻译破坏 GitHub 搜索，在授权网站诊断高风险组件，并显示和修复失效规则。"
   },
   "fallbackTitle": {
     "message": "GitHub 搜索"
@@ -56,6 +56,48 @@
       "count": { "content": "$1" }
     }
   },
+  "siteGuardHealthTitle": {
+    "message": "组件规则状态"
+  },
+  "siteGuardHealthIssues": {
+    "message": "$COUNT$ 条规则需要处理。",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "siteGuardHealthAllHealthy": {
+    "message": "此页面上的所有组件规则均已生效。"
+  },
+  "siteGuardHealthHealthy": {
+    "message": "已在此页面生效。"
+  },
+  "siteGuardHealthRecovering": {
+    "message": "正在等待稳定的替代组件。"
+  },
+  "siteGuardHealthMissing": {
+    "message": "未找到匹配的组件。"
+  },
+  "siteGuardHealthAmbiguous": {
+    "message": "找到了多个匹配组件。"
+  },
+  "siteGuardHealthWeak": {
+    "message": "此旧规则缺少自动修复所需的组件身份信息。"
+  },
+  "siteGuardHealthInvalid": {
+    "message": "保存的选择器无效。"
+  },
+  "siteGuardHealthUnavailable": {
+    "message": "请重新加载页面以检查此规则。"
+  },
+  "siteGuardRepair": {
+    "message": "修复"
+  },
+  "siteGuardRemoveRule": {
+    "message": "移除"
+  },
+  "siteGuardRemoveConfirm": {
+    "message": "确定移除此组件规则吗？"
+  },
   "siteGuardPermissionDenied": {
     "message": "未授予此网站的访问权限。"
   },
@@ -67,6 +109,9 @@
   },
   "pickerInstruction": {
     "message": "将鼠标移到组件上，然后点击以选择保护边界。"
+  },
+  "pickerRepairInstruction": {
+    "message": "请为这条未解决规则选择新的保护边界。"
   },
   "pickerSelected": {
     "message": "已选择组件；请确认，或改选它的父级。"
@@ -82,6 +127,9 @@
   "pickerProtect": {
     "message": "保护此组件"
   },
+  "pickerRepair": {
+    "message": "修复组件规则"
+  },
   "pickerParent": {
     "message": "选择父级"
   },
@@ -96,6 +144,9 @@
   },
   "pickerSaved": {
     "message": "保护已保存；开启网页翻译后请重新加载页面。"
+  },
+  "pickerRepaired": {
+    "message": "组件规则已修复。"
   },
   "pickerError": {
     "message": "无法保存此组件规则。"

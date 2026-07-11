@@ -22,7 +22,9 @@
   let waitsForDomReady = false;
   const rebindCandidates = new Map();
   const rebindNotifications = new Map();
+  const rebindRetryCounts = new Map();
   const rebindStabilityMs = 250;
+  const maxRebindRetries = 3;
 
   function normalizedRules(value) {
     const accepted = [];
@@ -30,11 +32,6 @@
     for (const rawRule of Array.isArray(value) ? value : []) {
       const selector = typeof rawRule?.selector === "string" ? rawRule.selector.trim() : "";
       if (!selector || selector.length > 512) continue;
-      try {
-        document.querySelector(selector);
-      } catch {
-        continue;
-      }
       const id = typeof rawRule.id === "string" && rawRule.id
         ? rawRule.id
         : `legacy:${selector}`;
@@ -85,6 +82,15 @@
     }
   }
 
+  function isSelectorValid(rule) {
+    try {
+      document.querySelector(rule.selector);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function matchingRuleElements(rule) {
     const elements = queryRule(rule);
     if (!selectorTools.isRebindableFingerprint(rule.fingerprint)) return elements;
@@ -92,6 +98,7 @@
   }
 
   function stableSelectorForRebind(rule, element) {
+    if ((rebindRetryCounts.get(rule.id) || 0) > maxRebindRetries) return "";
     const selector = selectorTools.selectorFor(element);
     if (!selector || selector.length > 512 || selector === rule.selector) return "";
     const now = Date.now();
@@ -124,15 +131,56 @@
           fingerprint: selectorTools.fingerprintFor(element)
         }
       }, (response) => {
-        if (chrome.runtime.lastError || !response?.ok) return;
+        if (chrome.runtime.lastError || !response?.ok) {
+          handleRebindFailure(rule.id);
+          return;
+        }
         rule.selector = selector;
         rule.fingerprint = selectorTools.normalizedFingerprint(
           response.result?.fingerprint || rule.fingerprint
         );
+        rebindNotifications.delete(rule.id);
+        rebindRetryCounts.delete(rule.id);
       });
     } catch {
       // Extension shutdown or a disconnected service worker must not affect the page.
+      handleRebindFailure(rule.id);
     }
+  }
+
+  function handleRebindFailure(ruleId) {
+    rebindNotifications.delete(ruleId);
+    const failures = (rebindRetryCounts.get(ruleId) || 0) + 1;
+    rebindRetryCounts.set(ruleId, failures);
+    if (failures <= maxRebindRetries) {
+      scheduleReconcile(1_000 * (2 ** (failures - 1)));
+    }
+  }
+
+  function ruleHealth(rule) {
+    if (!isSelectorValid(rule)) return "invalid";
+    const selected = queryRule(rule);
+    if (!selectorTools.isRebindableFingerprint(rule.fingerprint)) {
+      return selected.length ? "healthy" : "weak";
+    }
+
+    const directMatches = selected.filter((element) => (
+      selectorTools.matchesFingerprint(element, rule.fingerprint)
+    ));
+    if (directMatches.length === 1 && selected.length === 1) return "healthy";
+    if (directMatches.length > 1) return "ambiguous";
+
+    const candidates = selectorTools.fingerprintMatches(document, rule.fingerprint, 2);
+    if (candidates.length > 1) return "ambiguous";
+    if (candidates.length === 1) return "recovering";
+    return "missing";
+  }
+
+  function healthSnapshot() {
+    return {
+      origin,
+      rules: rules.map((rule) => ({ id: rule.id, state: ruleHealth(rule) }))
+    };
   }
 
   function reconcileRules() {
@@ -192,7 +240,12 @@
     const targets = [];
     for (const rule of rules) {
       const rebindable = selectorTools.isRebindableFingerprint(rule.fingerprint);
-      const localMatches = runtime.selectWithin(root, rule.selector);
+      let localMatches;
+      try {
+        localMatches = runtime.selectWithin(root, rule.selector);
+      } catch {
+        continue;
+      }
       if (!rebindable) {
         for (const element of localMatches) targets.push(remember(element));
         continue;
@@ -218,6 +271,7 @@
     rules = normalizedRules(value);
     rebindCandidates.clear();
     rebindNotifications.clear();
+    rebindRetryCounts.clear();
     for (const element of selectTargets(document)) runtime.protect(element);
   }
 
@@ -227,7 +281,7 @@
     updateRules(site?.enabled ? site.rules : []);
   }
 
-  const state = Object.freeze({ reload, updateRules });
+  const state = Object.freeze({ healthSnapshot, reload, updateRules });
   Object.defineProperty(globalThis, stateSymbol, {
     configurable: false,
     enumerable: false,
@@ -259,10 +313,16 @@
     subtree: true
   });
 
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "site-guard:rules-updated" && message.origin === origin) {
       updateRules(message.rules);
+      return false;
     }
+    if (message?.type === "site-guard:get-rule-health" && message.origin === origin) {
+      sendResponse(healthSnapshot());
+      return false;
+    }
+    return false;
   });
 
   void reload();

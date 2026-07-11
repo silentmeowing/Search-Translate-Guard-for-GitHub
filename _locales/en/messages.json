@@ -3,7 +3,7 @@
     "message": "Search Translate Guard for GitHub"
   },
   "extensionDescription": {
-    "message": "Protects GitHub search during translation, suggests risky components on authorized sites, and repairs confirmed rules after changes."
+    "message": "Protects GitHub search during translation, finds risky components on authorized sites, and diagnoses or repairs confirmed rules."
   },
   "fallbackTitle": {
     "message": "GitHub Search"
@@ -56,6 +56,48 @@
       "count": { "content": "$1" }
     }
   },
+  "siteGuardHealthTitle": {
+    "message": "Component rule health"
+  },
+  "siteGuardHealthIssues": {
+    "message": "$COUNT$ rule(s) need attention.",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "siteGuardHealthAllHealthy": {
+    "message": "All component rules are active on this page."
+  },
+  "siteGuardHealthHealthy": {
+    "message": "Protected on this page."
+  },
+  "siteGuardHealthRecovering": {
+    "message": "Waiting for a stable replacement."
+  },
+  "siteGuardHealthMissing": {
+    "message": "No matching component was found."
+  },
+  "siteGuardHealthAmbiguous": {
+    "message": "More than one matching component was found."
+  },
+  "siteGuardHealthWeak": {
+    "message": "This older rule lacks enough identity data for automatic repair."
+  },
+  "siteGuardHealthInvalid": {
+    "message": "The saved selector is invalid."
+  },
+  "siteGuardHealthUnavailable": {
+    "message": "Reload this page to inspect the rule."
+  },
+  "siteGuardRepair": {
+    "message": "Repair"
+  },
+  "siteGuardRemoveRule": {
+    "message": "Remove"
+  },
+  "siteGuardRemoveConfirm": {
+    "message": "Remove this component rule?"
+  },
   "siteGuardPermissionDenied": {
     "message": "Site access was not granted."
   },
@@ -67,6 +109,9 @@
   },
   "pickerInstruction": {
     "message": "Hover a component, then click it to select its protection boundary."
+  },
+  "pickerRepairInstruction": {
+    "message": "Select the replacement boundary for this unresolved rule."
   },
   "pickerSelected": {
     "message": "Component selected. Confirm it or choose its parent."
@@ -82,6 +127,9 @@
   "pickerProtect": {
     "message": "Protect component"
   },
+  "pickerRepair": {
+    "message": "Repair component rule"
+  },
   "pickerParent": {
     "message": "Choose parent"
   },
@@ -96,6 +144,9 @@
   },
   "pickerSaved": {
     "message": "Protection saved. Reload after enabling page translation."
+  },
+  "pickerRepaired": {
+    "message": "Component rule repaired."
   },
   "pickerError": {
     "message": "The component rule could not be saved."

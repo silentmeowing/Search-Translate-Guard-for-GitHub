@@ -228,7 +228,7 @@ test.describe("generic guard core", () => {
 });
 
 test.describe("user-authorized site rules", () => {
-  function siteGuardWithConfig(config) {
+  function siteGuardWithConfig(config, sendMessageBody = "callback?.({ ok: true, result: message.rule });") {
     return `
 globalThis.__siteGuardListeners = [];
 globalThis.chrome = {
@@ -238,7 +238,7 @@ globalThis.chrome = {
     sentMessages: [],
     sendMessage: (message, callback) => {
       globalThis.chrome.runtime.sentMessages.push(message);
-      callback?.({ ok: true, result: message.rule });
+      ${sendMessageBody}
     },
     onMessage: { addListener: (listener) => globalThis.__siteGuardListeners.push(listener) }
   }
@@ -246,6 +246,9 @@ globalThis.chrome = {
 globalThis.__deliverSiteGuardMessage = (message) => {
   for (const listener of globalThis.__siteGuardListeners) listener(message);
 };
+globalThis.__requestSiteGuardMessage = (message) => new Promise((resolve) => {
+  for (const listener of globalThis.__siteGuardListeners) listener(message, {}, resolve);
+});
 ${siteGeneratedSource}`;
   }
 
@@ -300,6 +303,72 @@ ${siteGeneratedSource}`;
       "data-search-translate-guard-rule",
       "true"
     );
+  });
+
+  test("reports rule health without exposing page text", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [
+              {
+                id: "healthy-rule",
+                selector: "#healthy-search",
+                fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+              },
+              {
+                id: "ambiguous-rule",
+                selector: "#old-dialog",
+                fingerprint: { tag: "div", role: "dialog", landmark: "div" }
+              },
+              {
+                id: "missing-rule",
+                selector: "#old-menu",
+                fingerprint: { tag: "custom-menu", role: "menu", landmark: "main" }
+              },
+              {
+                id: "weak-rule",
+                selector: "#old-button",
+                fingerprint: { tag: "button", landmark: "main" }
+              },
+              { id: "invalid-rule", selector: "#", fingerprint: {} }
+            ]
+          }
+        }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main>
+        <custom-search id="healthy-search" role="combobox">Private search text</custom-search>
+        <div id="dialog-one" role="dialog">Private dialog one</div>
+        <div id="dialog-two" role="dialog">Private dialog two</div>
+      </main>
+    `)}`);
+
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.__requestSiteGuardMessage({
+        type: "site-guard:get-rule-health",
+        origin: "null"
+      })
+    ))).toMatchObject({
+      origin: "null",
+      rules: [
+        { id: "healthy-rule", state: "healthy" },
+        { id: "ambiguous-rule", state: "ambiguous" },
+        { id: "missing-rule", state: "missing" },
+        { id: "weak-rule", state: "weak" },
+        { id: "invalid-rule", state: "invalid" }
+      ]
+    });
+
+    const snapshot = await page.evaluate(() => globalThis.__requestSiteGuardMessage({
+      type: "site-guard:get-rule-health",
+      origin: "null"
+    }));
+    expect(JSON.stringify(snapshot)).not.toContain("Private");
+    expect(JSON.stringify(snapshot)).not.toContain("selector");
   });
 
   test("rebinds a stale selector only to one fingerprint match", async ({ page }) => {
@@ -551,6 +620,76 @@ ${siteGeneratedSource}`;
       ))
     ))).toBe(true);
   });
+
+  test("retries a transient selector rebind failure", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "retry-rule",
+              selector: "#removed-search",
+              fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+            }]
+          }
+        }
+      }, `
+        globalThis.__rebindAttempts ||= 0;
+        if (message.type === "site-guard:rebind-rule") globalThis.__rebindAttempts += 1;
+        callback?.(globalThis.__rebindAttempts === 1
+          ? { ok: false, error: "service worker restarted" }
+          : { ok: true, result: message.rule });
+      `)
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main><custom-search id="replacement-search" role="combobox"></custom-search></main>
+    `)}`);
+
+    await expect.poll(() => page.evaluate(() => globalThis.__rebindAttempts), {
+      timeout: 3_000
+    }).toBeGreaterThanOrEqual(2);
+    await expect(page.locator("#replacement-search")).toHaveAttribute("translate", "no");
+  });
+
+  test("bounds repeated selector rebind failures", async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: {
+          null: {
+            enabled: true,
+            rules: [{
+              id: "bounded-retry-rule",
+              selector: "#removed-search",
+              fingerprint: { tag: "custom-search", role: "combobox", landmark: "main" }
+            }]
+          }
+        }
+      }, `
+        if (message.type === "site-guard:rebind-rule") {
+          globalThis.__rebindAttempts = (globalThis.__rebindAttempts || 0) + 1;
+        }
+        callback?.({ ok: false, error: "service worker unavailable" });
+      `)
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main><custom-search id="replacement-search" role="combobox"></custom-search></main>
+    `)}`);
+
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.__requestSiteGuardMessage({
+        type: "site-guard:get-rule-health",
+        origin: "null"
+      }).then((snapshot) => snapshot.rules.length)
+    ))).toBe(1);
+    await page.clock.runFor(20_000);
+    expect(await page.evaluate(() => globalThis.__rebindAttempts)).toBe(4);
+    await page.clock.runFor(60_000);
+    expect(await page.evaluate(() => globalThis.__rebindAttempts)).toBe(4);
+  });
 });
 
 test.describe("risk detector", () => {
@@ -673,6 +812,49 @@ globalThis.chrome = {
       }
     });
     expect(JSON.stringify(payload)).not.toContain("Outside private copy");
+  });
+
+  test("explicitly replaces one unresolved rule without storing visible text", async ({ page }) => {
+    await page.addInitScript({ content: `
+globalThis.pickerMessages = [];
+globalThis.chrome = {
+  i18n: { getMessage: () => "" },
+  runtime: {
+    lastError: null,
+    sendMessage: (message, callback) => {
+      globalThis.pickerMessages.push(message);
+      callback({ ok: true, result: message.rule });
+    }
+  }
+};` });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <custom-dialog id="replacement-dialog" role="dialog">
+        Private account confirmation
+      </custom-dialog>
+    `)}`);
+    await page.evaluate(() => {
+      globalThis[Symbol.for("search-translate-guard.component-picker-request")] = {
+        ruleId: "unresolved-rule"
+      };
+    });
+    await page.addScriptTag({ content: riskDetectorSource });
+    await page.addScriptTag({ content: selectorToolsSource });
+    await page.addScriptTag({ content: pickerSource });
+
+    const picker = page.locator("#search-translate-guard-picker");
+    await expect(picker.locator("button.protect")).toHaveText("Repair component rule");
+    await picker.locator("button.protect").click();
+
+    const payload = await page.evaluate(() => globalThis.pickerMessages[0]);
+    expect(payload).toMatchObject({
+      type: "site-guard:replace-rule",
+      rule: {
+        id: "unresolved-rule",
+        selector: "#replacement-dialog",
+        fingerprint: { tag: "custom-dialog", role: "dialog" }
+      }
+    });
+    expect(JSON.stringify(payload)).not.toContain("Private account confirmation");
   });
 });
 

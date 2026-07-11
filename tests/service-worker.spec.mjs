@@ -24,6 +24,12 @@ function createWorkerHarness() {
   const storage = {};
   const registrations = [];
   const tabMessages = [];
+  const tabUrls = new Map([
+    [7, "https://attacker.example/page"],
+    [42, "https://example.com/app"],
+    [43, "https://example.com/other"]
+  ]);
+  const runtimeHealth = { origin: "https://example.com", rules: [] };
   const grantedOrigins = new Set(["https://example.com/*"]);
   const onMessage = createEvent();
   const chrome = {
@@ -67,8 +73,24 @@ function createWorkerHarness() {
       }
     },
     tabs: {
+      async query({ url }) {
+        const patterns = Array.isArray(url) ? url : [url];
+        return [...tabUrls.entries()]
+          .filter(([, tabUrl]) => patterns.some((pattern) => {
+            const prefix = pattern.replace(/\*$/, "");
+            return tabUrl.startsWith(prefix);
+          }))
+          .map(([id, tabUrl]) => ({ id, url: tabUrl }));
+      },
+      async get(tabId) {
+        const url = tabUrls.get(tabId);
+        return url ? { id: tabId, url } : null;
+      },
       async sendMessage(tabId, message) {
         tabMessages.push({ tabId, message: structuredClone(message) });
+        if (message.type === "site-guard:get-rule-health") {
+          return structuredClone(runtimeHealth);
+        }
       }
     },
     runtime: {
@@ -93,7 +115,15 @@ function createWorkerHarness() {
     });
   }
 
-  return { grantedOrigins, registrations, send, storage, tabMessages };
+  return {
+    grantedOrigins,
+    registrations,
+    runtimeHealth,
+    send,
+    storage,
+    tabMessages,
+    tabUrls
+  };
 }
 
 test.describe("site guard service worker", () => {
@@ -112,7 +142,7 @@ test.describe("site guard service worker", () => {
       const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
       expect(manifest).toMatchObject({
         manifest_version: 3,
-        version: "2.4.0",
+        version: "2.5.0",
         permissions: ["activeTab", "scripting", "storage"],
         optional_host_permissions: ["http://*/*", "https://*/*"]
       });
@@ -169,10 +199,40 @@ test.describe("site guard service worker", () => {
     expect(storedRule.selector).toBe("main > custom-search[role=combobox]");
     expect(storedRule.fingerprint).toEqual({ tag: "custom-search", role: "combobox" });
     expect(JSON.stringify(storedRule)).not.toContain("private visible page text");
-    expect(harness.tabMessages.at(-1)).toMatchObject({
+    expect(harness.tabMessages.find(({ tabId }) => tabId === 42)).toMatchObject({
       tabId: 42,
       message: { type: "site-guard:rules-updated", origin: "https://example.com" }
     });
+    expect(harness.tabMessages.find(({ tabId }) => tabId === 43)).toMatchObject({
+      tabId: 43,
+      message: { type: "site-guard:rules-updated", origin: "https://example.com" }
+    });
+  });
+
+  test("serializes concurrent rule writes without losing either component", async () => {
+    const harness = createWorkerHarness();
+    await harness.send({ type: "site-guard:enable", origin: "https://example.com" });
+    const sender = { url: "https://example.com/app", tab: { id: 42 } };
+
+    const responses = await Promise.all([
+      harness.send({
+        type: "site-guard:add-rule",
+        origin: "https://example.com",
+        rule: { selector: "#search", fingerprint: { tag: "custom-search", role: "combobox" } }
+      }, sender),
+      harness.send({
+        type: "site-guard:add-rule",
+        origin: "https://example.com",
+        rule: { selector: "#menu", fingerprint: { tag: "custom-menu", role: "menu" } }
+      }, sender)
+    ]);
+
+    expect(responses.every((response) => response.ok)).toBe(true);
+    expect(harness.storage.siteGuardConfig.sites["https://example.com"].rules)
+      .toHaveLength(2);
+    expect(harness.storage.siteGuardConfig.sites["https://example.com"].rules.map(
+      (rule) => rule.selector
+    )).toEqual(["#search", "#menu"]);
   });
 
   test("persists a same-origin selector rebind and rejects forged updates", async () => {
@@ -246,6 +306,108 @@ test.describe("site guard service worker", () => {
     expect(
       harness.storage.siteGuardConfig.sites["https://example.com"].rules[0].selector
     ).toBe("#new-search");
+  });
+
+  test("reports ephemeral rule health without persisting page diagnostics", async () => {
+    const harness = createWorkerHarness();
+    await harness.send({ type: "site-guard:enable", origin: "https://example.com" });
+    for (const [selector, role] of [["#search", "combobox"], ["#menu", "menu"]]) {
+      await harness.send({
+        type: "site-guard:add-rule",
+        origin: "https://example.com",
+        rule: { selector, fingerprint: { tag: "div", role } }
+      }, {
+        url: "https://example.com/app",
+        tab: { id: 42 }
+      });
+    }
+    const storedRules = harness.storage.siteGuardConfig.sites["https://example.com"].rules;
+    harness.runtimeHealth.rules = [
+      { id: storedRules[0].id, state: "healthy", text: "private page copy" },
+      { id: storedRules[1].id, state: "ambiguous" },
+      { id: "forged", state: "arbitrary" }
+    ];
+
+    const response = await harness.send({
+      type: "site-guard:get-status",
+      origin: "https://example.com",
+      tabId: 42
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.result.rules).toEqual([
+      { id: storedRules[0].id, selector: "#search", state: "healthy" },
+      { id: storedRules[1].id, selector: "#menu", state: "ambiguous" }
+    ]);
+    expect(JSON.stringify(harness.storage)).not.toContain("private page copy");
+  });
+
+  test("explicitly repairs and removes one rule while rejecting cross-origin actions", async () => {
+    const harness = createWorkerHarness();
+    await harness.send({ type: "site-guard:enable", origin: "https://example.com" });
+    await harness.send({
+      type: "site-guard:add-rule",
+      origin: "https://example.com",
+      rule: {
+        selector: "#old-search",
+        fingerprint: { tag: "custom-search", role: "combobox" }
+      }
+    }, {
+      url: "https://example.com/app",
+      tab: { id: 42 }
+    });
+    const storedRule = harness.storage.siteGuardConfig.sites["https://example.com"].rules[0];
+
+    const repaired = await harness.send({
+      type: "site-guard:replace-rule",
+      origin: "https://example.com",
+      rule: {
+        id: storedRule.id,
+        selector: "#replacement-dialog",
+        fingerprint: { tag: "div", role: "dialog", text: "private dialog title" }
+      }
+    }, {
+      url: "https://example.com/route",
+      tab: { id: 42 }
+    });
+    expect(repaired.ok).toBe(true);
+    expect(repaired.result).toMatchObject({
+      id: storedRule.id,
+      selector: "#replacement-dialog",
+      fingerprint: { tag: "div", role: "dialog" }
+    });
+    expect(repaired.result.repairedAt).toEqual(expect.any(String));
+    expect(JSON.stringify(repaired.result)).not.toContain("private dialog title");
+
+    const forgedRepair = await harness.send({
+      type: "site-guard:replace-rule",
+      origin: "https://example.com",
+      rule: { id: storedRule.id, selector: "#attacker", fingerprint: { tag: "div" } }
+    }, {
+      url: "https://attacker.example/page",
+      tab: { id: 7 }
+    });
+    expect(forgedRepair.ok).toBe(false);
+    expect(forgedRepair.error).toContain("does not belong");
+
+    const forgedRemoval = await harness.send({
+      type: "site-guard:remove-rule",
+      origin: "https://example.com",
+      ruleId: storedRule.id,
+      tabId: 7
+    });
+    expect(forgedRemoval.ok).toBe(false);
+    expect(forgedRemoval.error).toContain("current tab");
+
+    const removed = await harness.send({
+      type: "site-guard:remove-rule",
+      origin: "https://example.com",
+      ruleId: storedRule.id,
+      tabId: 42
+    });
+    expect(removed.ok).toBe(true);
+    expect(removed.result.ruleCount).toBe(0);
+    expect(harness.storage.siteGuardConfig.sites["https://example.com"].rules).toEqual([]);
   });
 
   test("rejects cross-origin rule messages and unregisters disabled sites", async () => {
