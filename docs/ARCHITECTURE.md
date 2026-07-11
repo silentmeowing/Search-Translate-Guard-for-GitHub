@@ -47,18 +47,21 @@ If the check fails, the adapter creates a local Shadow DOM dialog. It preserves 
 
 ## User-authorized site rules
 
-The optional site workflow has four extension contexts:
+The optional site workflow has five extension contexts:
 
 1. `popup/` displays the current origin and asks the user to grant, inspect, or remove protection.
 2. `src/background/service-worker.js` validates messages, stores versioned data-only rules, and registers one persistent `document_start` script per authorized origin.
-3. `src/picker.js` lets the user choose a component boundary. It generates a structural selector and a fingerprint containing only tag, role, type, name, and landmark metadata.
-4. `Site-Translate-Guard.content.js` reads rules from local extension storage and activates the generic adapter. It observes later DOM additions through the same core.
+3. `src/risk-detector.js` performs a bounded, user-initiated scan of visible structural interaction signals and returns ranked in-memory candidates.
+4. `src/picker.js` presents suggested candidates or lets the user choose a component boundary manually. It generates a structural selector and a fingerprint containing only tag, role, type, name, and landmark metadata.
+5. `Site-Translate-Guard.content.js` reads rules from local extension storage and activates the generic adapter. It observes later DOM additions through the same core.
 
 The browser permission prompt is initiated from the popup. `activeTab` supports the one-time picker, while HTTP and HTTPS origins remain in `optional_host_permissions`. Dynamic content scripts require Chrome/Edge 96 or later.
 
 Rules are keyed by exact origin, even though Chromium match patterns grant a hostname across ports. When a dynamically registered script runs on a different port, the adapter finds no matching exact-origin configuration and performs no protection.
 
-The picker favors IDs and stable data attributes, then builds a bounded structural selector from roles, names, types, stable classes, and ancestry. It deliberately excludes visible text and input values. Users can move the selected boundary to a parent before confirming.
+The detector scores custom elements, composite ARIA roles, dialogs and popovers, editable controls, ARIA relationships, and selected framework state attributes. It visits at most 3,000 visible elements per invocation and keeps at most 24 raw candidates. It deliberately excludes visible text and input values, and its scores are never persisted or transmitted.
+
+The picker maps candidates to bounded component roots, deduplicates them, and displays at most 12 ranked suggestions. It favors IDs and stable data attributes, then builds a bounded structural selector from roles, names, types, stable classes, and ancestry. Users can cycle suggestions, move the selected boundary to a parent, or return to manual selection before confirming.
 
 ```text
 Page or framework adds candidate content
@@ -77,7 +80,9 @@ User opens extension on another site
         |
         +--> browser grants current hostname permission
                  |
-                 +--> user selects component boundary
+                 +--> local structural risk scan
+                          |
+                          +--> user confirms a suggestion or selects manually
                           |
                           +--> local structural rule
                                    |
@@ -89,7 +94,7 @@ User opens extension on another site
 - The manifest statically matches only `https://github.com/*`. `activeTab`, `scripting`, and `storage` support the explicit user workflow; other HTTP and HTTPS hosts remain optional permissions.
 - The extension does not patch global DOM prototypes. Silencing invalid `removeChild` or `insertBefore` calls can leave stale or missing UI without repairing application state.
 - There is no developer server, analytics endpoint, remote script, or runtime dependency.
-- Local extension storage contains only origin-scoped structural rules and never page text or field values.
+- Local extension storage contains only origin-scoped structural rules and never page text, field values, or ephemeral candidate scores.
 - Playwright is a development-only dependency and is not referenced by the extension manifest or generated userscript.
 
 ## Limitations
@@ -97,5 +102,5 @@ User opens extension on another site
 - Future GitHub redesigns may require adapter selector or health-check updates.
 - The fallback intentionally provides direct query submission, not native suggestions or saved searches.
 - `translate="no"` is a request to translation systems, not a guarantee that every third-party translator will respect the boundary.
-- Generic site rules prevent translation inside a selected boundary; they do not infer business semantics or provide automatic recovery UI.
+- Generic scoring is a best-effort structural heuristic, not proof that every risky component was found. Generic rules prevent translation inside a confirmed boundary; they do not infer business semantics or provide automatic recovery UI.
 - Closed shadow roots and cross-origin frames cannot be selected from the top-level page without separate support and permissions.

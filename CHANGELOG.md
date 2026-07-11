@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [2.3.0] - 2026-07-11
+
+### Added
+
+- A bounded, local risk detector for sites the user explicitly authorizes.
+- Ranked component suggestions based on custom elements, composite ARIA roles, popup relationships, editable controls, and framework state attributes.
+- Picker controls for cycling suggestions, moving to a parent boundary, or returning to fully manual selection.
+
+### Privacy and safety
+
+- Risk scoring reads structural attributes only and never reads visible text or field values.
+- Candidate scores remain ephemeral; only a user-confirmed structural selector and non-text fingerprint are stored.
+- Detection runs only after the user grants the current site permission and opens the component picker.
+
+### Validation
+
+- Added deterministic coverage for structural ranking, data minimization, suggested-boundary navigation, and the retained manual workflow.
+
 ## [2.2.1] - 2026-07-11
 
 ### Fixed

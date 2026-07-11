@@ -13,6 +13,7 @@ const siteGeneratedSource = fs.readFileSync(
   path.join(root, "Site-Translate-Guard.content.js"),
   "utf8"
 );
+const riskDetectorSource = fs.readFileSync(path.join(root, "src/risk-detector.js"), "utf8");
 const pickerSource = fs.readFileSync(path.join(root, "src/picker.js"), "utf8");
 
 const authenticatedGitHubFixture = `<!doctype html>
@@ -293,6 +294,38 @@ ${siteGeneratedSource}`;
   });
 });
 
+test.describe("risk detector", () => {
+  test("ranks structural interaction signals without reading text or field values", async ({ page }) => {
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <p>Private article words</p>
+      <custom-search id="risky-search" role="combobox" aria-expanded="false" aria-controls="results">
+        <input value="private query">
+      </custom-search>
+      <relative-time id="passive-custom">2026-07-11</relative-time>
+      <button id="plain-button" type="button">Ordinary action</button>
+    `)}`);
+    await page.addScriptTag({ content: riskDetectorSource });
+
+    const result = await page.evaluate(() => {
+      const detector = globalThis[Symbol.for("search-translate-guard.risk-detector")];
+      return detector.detect(document).map(({ element, score, reasons }) => ({
+        id: element.id,
+        score,
+        reasons
+      }));
+    });
+
+    expect(result[0]).toMatchObject({
+      id: "risky-search",
+      reasons: expect.arrayContaining(["custom-element", "composite-role", "aria-expanded"])
+    });
+    expect(result.some((candidate) => candidate.id === "plain-button")).toBe(false);
+    expect(result.some((candidate) => candidate.id === "passive-custom")).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("Private article words");
+    expect(JSON.stringify(result)).not.toContain("private query");
+  });
+});
+
 test.describe("component picker", () => {
   test("captures a structural selector without activating the page or storing visible text", async ({ page }) => {
     await page.addInitScript({ content: `
@@ -318,8 +351,11 @@ globalThis.chrome = {
         });
       </script>
     `)}`);
+    await page.addScriptTag({ content: riskDetectorSource });
     await page.addScriptTag({ content: pickerSource });
 
+    await expect(page.locator("#search-translate-guard-picker button.manual")).toBeVisible();
+    await page.locator("#search-translate-guard-picker button.manual").click();
     await page.locator("#search-trigger").hover();
     await page.locator("#search-trigger").click();
     await page.locator("#search-translate-guard-picker button.protect").click();
@@ -335,6 +371,47 @@ globalThis.chrome = {
       }
     });
     expect(JSON.stringify(payload)).not.toContain("Private visible search words");
+  });
+
+  test("offers ranked high-risk boundaries while keeping confirmation local", async ({ page }) => {
+    await page.addInitScript({ content: `
+globalThis.pickerMessages = [];
+globalThis.chrome = {
+  i18n: { getMessage: () => "" },
+  runtime: {
+    lastError: null,
+    sendMessage: (message, callback) => {
+      globalThis.pickerMessages.push(message);
+      callback({ ok: true, result: { ruleCount: 1 } });
+    }
+  }
+};` });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main>
+        <custom-select id="first-risk" role="combobox" aria-expanded="false" style="display:block;width:120px;height:36px"></custom-select>
+        <div id="second-risk" role="dialog" style="width:120px;height:36px"></div>
+        <p>Outside private copy</p>
+      </main>
+    `)}`);
+    await page.addScriptTag({ content: riskDetectorSource });
+    await page.addScriptTag({ content: pickerSource });
+
+    const picker = page.locator("#search-translate-guard-picker");
+    await expect(picker.locator(".status")).toContainText("Suggested high-risk component 1 of 2");
+    await expect(picker.locator(".selector")).toContainText("#first-risk");
+    await picker.locator("button.next").click();
+    await expect(picker.locator(".selector")).toContainText("#second-risk");
+    await picker.locator("button.protect").click();
+
+    const payload = await page.evaluate(() => globalThis.pickerMessages[0]);
+    expect(payload).toMatchObject({
+      type: "site-guard:add-rule",
+      rule: {
+        selector: "#second-risk",
+        fingerprint: { tag: "div", role: "dialog" }
+      }
+    });
+    expect(JSON.stringify(payload)).not.toContain("Outside private copy");
   });
 });
 

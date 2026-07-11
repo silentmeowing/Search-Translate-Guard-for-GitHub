@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Search Translate Guard for GitHub
 // @namespace    local.github-search-translate-guard
-// @version      2.2.1
+// @version      2.3.0
 // @description  Keep GitHub search usable during automatic page translation, with a local fallback dialog when needed.
 // @match        https://github.com/*
 // @run-at       document-start

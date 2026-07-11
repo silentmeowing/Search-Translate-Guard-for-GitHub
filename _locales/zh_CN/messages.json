@@ -3,7 +3,7 @@
     "message": "GitHub 搜索翻译保护器"
   },
   "extensionDescription": {
-    "message": "防止网页翻译破坏 GitHub 搜索，并允许用户在主动授权的网站上保护所选组件。"
+    "message": "防止网页翻译破坏 GitHub 搜索，并在用户授权的网站上推荐需要保护的高风险组件。"
   },
   "fallbackTitle": {
     "message": "GitHub 搜索"
@@ -33,7 +33,7 @@
     "message": "为此网站启用"
   },
   "siteGuardSelect": {
-    "message": "选择一个组件"
+    "message": "查找或选择组件"
   },
   "siteGuardClear": {
     "message": "清除组件规则"
@@ -71,11 +71,25 @@
   "pickerSelected": {
     "message": "已选择组件；请确认，或改选它的父级。"
   },
+  "pickerSuggested": {
+    "message": "推荐的高风险组件：第 $INDEX$ 个，共 $TOTAL$ 个（评分 $SCORE$）。请确认或查看其他候选。",
+    "placeholders": {
+      "index": { "content": "$1" },
+      "total": { "content": "$2" },
+      "score": { "content": "$3" }
+    }
+  },
   "pickerProtect": {
     "message": "保护此组件"
   },
   "pickerParent": {
     "message": "选择父级"
+  },
+  "pickerNextSuggestion": {
+    "message": "下一个候选"
+  },
+  "pickerChooseManually": {
+    "message": "手动选择"
   },
   "pickerCancel": {
     "message": "取消"

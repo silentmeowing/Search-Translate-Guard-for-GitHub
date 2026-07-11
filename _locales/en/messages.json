@@ -3,7 +3,7 @@
     "message": "Search Translate Guard for GitHub"
   },
   "extensionDescription": {
-    "message": "Protects GitHub search during page translation and isolates selected components on sites users explicitly authorize."
+    "message": "Protects GitHub search during page translation and suggests protection for risky components on sites users authorize."
   },
   "fallbackTitle": {
     "message": "GitHub Search"
@@ -33,7 +33,7 @@
     "message": "Enable for this site"
   },
   "siteGuardSelect": {
-    "message": "Select a component"
+    "message": "Find or select components"
   },
   "siteGuardClear": {
     "message": "Clear component rules"
@@ -71,11 +71,25 @@
   "pickerSelected": {
     "message": "Component selected. Confirm it or choose its parent."
   },
+  "pickerSuggested": {
+    "message": "Suggested high-risk component $INDEX$ of $TOTAL$ (score $SCORE$). Confirm it or inspect another candidate.",
+    "placeholders": {
+      "index": { "content": "$1" },
+      "total": { "content": "$2" },
+      "score": { "content": "$3" }
+    }
+  },
   "pickerProtect": {
     "message": "Protect component"
   },
   "pickerParent": {
     "message": "Choose parent"
+  },
+  "pickerNextSuggestion": {
+    "message": "Next suggestion"
+  },
+  "pickerChooseManually": {
+    "message": "Choose manually"
   },
   "pickerCancel": {
     "message": "Cancel"
