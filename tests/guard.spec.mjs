@@ -231,8 +231,13 @@ test.describe("user-authorized site rules", () => {
   function siteGuardWithConfig(config, sendMessageBody = "callback?.({ ok: true, result: message.rule });") {
     return `
 globalThis.__siteGuardListeners = [];
+globalThis.__siteGuardStorageListeners = [];
+globalThis.__siteGuardConfig = ${JSON.stringify(config)};
 globalThis.chrome = {
-  storage: { local: { get: async () => ({ siteGuardConfig: ${JSON.stringify(config)} }) } },
+  storage: {
+    local: { get: async () => ({ siteGuardConfig: structuredClone(globalThis.__siteGuardConfig) }) },
+    onChanged: { addListener: (listener) => globalThis.__siteGuardStorageListeners.push(listener) }
+  },
   runtime: {
     lastError: null,
     sentMessages: [],
@@ -249,6 +254,13 @@ globalThis.__deliverSiteGuardMessage = (message) => {
 globalThis.__requestSiteGuardMessage = (message) => new Promise((resolve) => {
   for (const listener of globalThis.__siteGuardListeners) listener(message, {}, resolve);
 });
+globalThis.__setSiteGuardConfig = (nextConfig) => {
+  const previous = globalThis.__siteGuardConfig;
+  globalThis.__siteGuardConfig = structuredClone(nextConfig);
+  for (const listener of globalThis.__siteGuardStorageListeners) {
+    listener({ siteGuardConfig: { oldValue: previous, newValue: nextConfig } }, "local");
+  }
+};
 ${siteGeneratedSource}`;
   }
 
@@ -689,6 +701,133 @@ ${siteGeneratedSource}`;
     expect(await page.evaluate(() => globalThis.__rebindAttempts)).toBe(4);
     await page.clock.runFor(60_000);
     expect(await page.evaluate(() => globalThis.__rebindAttempts)).toBe(4);
+  });
+
+  test("ranks an observed interactive text rewrite without recording page text", async ({ page }) => {
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: { null: { enabled: true, rules: [] } }
+      })
+    });
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main>
+        <button id="observed-button" type="button">Private account action</button>
+        <p id="passive-copy">Private article paragraph</p>
+      </main>
+    `)}`);
+    await page.evaluate(() => {
+      for (const selector of ["#passive-copy", "#observed-button"]) {
+        const element = document.querySelector(selector);
+        const original = element.firstChild;
+        const wrapper = document.createElement("font");
+        wrapper.append(original.cloneNode(true));
+        element.removeChild(original);
+        element.append(wrapper);
+      }
+    });
+
+    await expect.poll(() => page.evaluate(() => (
+      globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")].count()
+    ))).toBe(1);
+    const observed = await page.evaluate(() => (
+      globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")]
+        .candidates()
+        .map(({ element, score, reasons, occurrences }) => ({
+          id: element.id,
+          score,
+          reasons,
+          occurrences
+        }))
+    ));
+    expect(observed).toEqual([{
+      id: "observed-button",
+      score: expect.any(Number),
+      reasons: expect.arrayContaining(["observed-text-rewrite"]),
+      occurrences: 1
+    }]);
+    expect(JSON.stringify(observed)).not.toContain("Private");
+
+    const health = await page.evaluate(() => globalThis.__requestSiteGuardMessage({
+      type: "site-guard:get-rule-health",
+      origin: "null"
+    }));
+    expect(health.observedRiskCount).toBe(1);
+    expect(JSON.stringify(health)).not.toContain("Private");
+
+    await page.addScriptTag({ content: pickerSource });
+    const picker = page.locator("#search-translate-guard-picker");
+    await expect(picker.locator(".status")).toContainText("Recent DOM text rewriting was observed");
+    await expect(picker.locator(".selector")).toHaveText("#observed-button");
+    await picker.locator("button.protect").click();
+    const payload = await page.evaluate(() => globalThis.chrome.runtime.sentMessages.find(
+      (message) => message.type === "site-guard:add-rule"
+    ));
+    expect(payload.rule.selector).toBe("#observed-button");
+    expect(JSON.stringify(payload)).not.toContain("Private account action");
+
+    await page.evaluate(() => globalThis.__setSiteGuardConfig({
+      schemaVersion: 1,
+      sites: { null: { enabled: false, rules: [] } }
+    }));
+    await expect.poll(() => page.evaluate(() => (
+      globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")].count()
+    ))).toBe(0);
+    await page.evaluate(() => {
+      const button = document.createElement("button");
+      button.id = "after-disable";
+      button.append("Private post-disable text");
+      document.body.append(button);
+      const original = button.firstChild;
+      const wrapper = document.createElement("font");
+      wrapper.append(original.cloneNode(true));
+      button.replaceChild(wrapper, original);
+    });
+    await page.waitForTimeout(50);
+    expect(await page.evaluate(() => (
+      globalThis[Symbol.for("search-translate-guard.mutation-risk-observer")].count()
+    ))).toBe(0);
+  });
+
+  test("bounds and expires observed risks while ignoring protected components", async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript({
+      content: siteGuardWithConfig({
+        schemaVersion: 1,
+        sites: { null: { enabled: true, rules: [] } }
+      })
+    });
+    const buttons = Array.from({ length: 30 }, (_, index) => (
+      `<button id="risk-${index}" type="button">Private ${index}</button>`
+    )).join("");
+    await page.goto(`data:text/html,${encodeURIComponent(`
+      <main>
+        ${buttons}
+        <button id="protected" translate="no">Protected private text</button>
+      </main>
+    `)}`);
+    await page.evaluate(() => {
+      for (const element of document.querySelectorAll("button")) {
+        const original = element.firstChild;
+        const wrapper = document.createElement("span");
+        wrapper.append(original.cloneNode(true));
+        element.replaceChild(wrapper, original);
+      }
+    });
+
+    const observerSymbol = "search-translate-guard.mutation-risk-observer";
+    await expect.poll(() => page.evaluate((symbol) => (
+      globalThis[Symbol.for(symbol)].count()
+    ), observerSymbol)).toBe(24);
+    const ids = await page.evaluate((symbol) => (
+      globalThis[Symbol.for(symbol)].candidates().map(({ element }) => element.id)
+    ), observerSymbol);
+    expect(ids).not.toContain("protected");
+
+    await page.clock.runFor((15 * 60 * 1_000) + 1);
+    expect(await page.evaluate((symbol) => (
+      globalThis[Symbol.for(symbol)].count()
+    ), observerSymbol)).toBe(0);
   });
 });
 

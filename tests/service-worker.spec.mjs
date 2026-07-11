@@ -29,7 +29,11 @@ function createWorkerHarness() {
     [42, "https://example.com/app"],
     [43, "https://example.com/other"]
   ]);
-  const runtimeHealth = { origin: "https://example.com", rules: [] };
+  const runtimeHealth = {
+    origin: "https://example.com",
+    observedRiskCount: 0,
+    rules: []
+  };
   const grantedOrigins = new Set(["https://example.com/*"]);
   const onMessage = createEvent();
   const chrome = {
@@ -142,7 +146,7 @@ test.describe("site guard service worker", () => {
       const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
       expect(manifest).toMatchObject({
         manifest_version: 3,
-        version: "2.5.0",
+        version: "2.6.0",
         permissions: ["activeTab", "scripting", "storage"],
         optional_host_permissions: ["http://*/*", "https://*/*"]
       });
@@ -327,6 +331,7 @@ test.describe("site guard service worker", () => {
       { id: storedRules[1].id, state: "ambiguous" },
       { id: "forged", state: "arbitrary" }
     ];
+    harness.runtimeHealth.observedRiskCount = 500;
 
     const response = await harness.send({
       type: "site-guard:get-status",
@@ -339,6 +344,7 @@ test.describe("site guard service worker", () => {
       { id: storedRules[0].id, selector: "#search", state: "healthy" },
       { id: storedRules[1].id, selector: "#menu", state: "ambiguous" }
     ]);
+    expect(response.result.observedRiskCount).toBe(24);
     expect(JSON.stringify(harness.storage)).not.toContain("private page copy");
   });
 
@@ -427,10 +433,13 @@ test.describe("site guard service worker", () => {
     const disabled = await harness.send({
       type: "site-guard:disable",
       origin: "https://example.com",
-      tabId: 7
+      tabId: 42
     });
     expect(disabled.ok).toBe(true);
     expect(disabled.result.enabled).toBe(false);
     expect(harness.registrations).toHaveLength(0);
+    expect(harness.tabMessages.filter(({ message }) => (
+      message.type === "site-guard:rules-updated" && message.enabled === false
+    )).map(({ tabId }) => tabId).sort()).toEqual([42, 43]);
   });
 });

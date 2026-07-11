@@ -16,6 +16,7 @@ test.describe("site guard popup", () => {
         permissionGranted: true,
         enabled: true,
         ruleCount: 2,
+        observedRiskCount: 2,
         rules: [
           { id: "healthy-rule", selector: "#search", state: "healthy" },
           { id: "missing-rule", selector: "main > custom-menu", state: "missing" }
@@ -62,6 +63,9 @@ test.describe("site guard popup", () => {
   });
 
   test("renders local rule health and removes only the selected rule", async ({ page }) => {
+    await expect(page.locator("#observed")).toHaveText(
+      "2 recent risky DOM rewrite(s) were observed. Review suggested components."
+    );
     await expect(page.locator("#health-summary")).toHaveText("1 rule(s) need attention.");
     await expect(page.locator(".rule-item")).toHaveCount(2);
     await expect(page.locator(".rule-state[data-state=missing]")).toHaveText(
