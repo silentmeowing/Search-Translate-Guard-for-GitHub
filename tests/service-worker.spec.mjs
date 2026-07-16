@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { chromium, expect, test } from "@playwright/test";
 
 const root = path.resolve(import.meta.dirname, "..");
+const expectedManifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const workerSource = fs.readFileSync(
   path.join(root, "src", "background", "service-worker.js"),
   "utf8"
@@ -199,10 +200,10 @@ test.describe("site guard service worker", () => {
     try {
       const workers = context.serviceWorkers();
       const worker = workers[0] || await context.waitForEvent("serviceworker");
-      const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
-      expect(manifest).toMatchObject({
+      const loadedManifest = await worker.evaluate(() => chrome.runtime.getManifest());
+      expect(loadedManifest).toMatchObject({
         manifest_version: 3,
-        version: "2.8.1",
+        version: expectedManifest.version,
         permissions: ["activeTab", "scripting", "storage"],
         optional_host_permissions: ["http://*/*", "https://*/*"]
       });

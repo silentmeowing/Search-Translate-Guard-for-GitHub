@@ -1,6 +1,6 @@
 # Microsoft Edge Add-ons Store Audit
 
-Audit date: July 11, 2026
+Audit date: July 16, 2026
 
 ## Manifest
 
@@ -8,7 +8,7 @@ Audit date: July 11, 2026
 |---|---|---|
 | `manifest_version` | `3` | Pass |
 | `name` | localized `__MSG_extensionName__` | Pass |
-| `version` | `2.8.1` | Pass |
+| `version` | `2.8.2` | Pass |
 | `description` | localized `__MSG_extensionDescription__` | Pass |
 | `default_locale` | `en` | Pass |
 | Locales | `en`, `zh_CN` | Pass |
@@ -39,6 +39,14 @@ Audit date: July 11, 2026
 - Original icon; no GitHub, Microsoft, or Edge logo.
 - Non-affiliation statement is present in the README, privacy policy, and store description.
 - No test account is required; public GitHub repositories are sufficient for certification.
+
+## Distribution package
+
+- The installable asset is named `Search-Translate-Guard-for-GitHub-extension-v*.zip`; GitHub-generated source archives are not presented as browser installation packages.
+- `manifest.json` is stored directly at the ZIP root, so extracting the asset produces one folder that can be selected with “Load unpacked”.
+- The dependency-free Node.js packager uses an explicit runtime-file allowlist, LF-normalized tracked text, and deterministic metadata.
+- Package verification reopens the produced ZIP and checks safe UTF-8 entry names, central and local headers, sizes, CRC values, LF-normalized source contents, the root-level manifest, and its version.
+- GitHub Actions runs the package regression and uploads the verified installable ZIP as a workflow artifact.
 
 ## Required Partner Center disclosures
 

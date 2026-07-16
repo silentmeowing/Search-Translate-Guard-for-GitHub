@@ -1,13 +1,15 @@
 {
   "name": "search-translate-guard-for-github",
-  "version": "2.8.1",
+  "version": "2.8.2",
   "private": true,
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:check": "node scripts/build.mjs --check",
+    "package": "node scripts/package.mjs",
+    "package:check": "node scripts/package.mjs --check",
     "validate": "node scripts/validate.mjs",
     "test": "playwright test",
-    "check": "npm run build:check && npm run validate && npm test"
+    "check": "npm run build:check && npm run validate && npm run package:check && npm test"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1"
