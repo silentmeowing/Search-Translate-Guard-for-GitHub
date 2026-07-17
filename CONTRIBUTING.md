@@ -9,8 +9,9 @@ Contributions that improve compatibility, accessibility, tests, documentation, o
 3. Edit files under `src/` and `popup/`; do not edit either generated root content script directly.
 4. Run `npm run build` to regenerate the GitHub userscript and opt-in site content script.
 5. Run `npm run check` before opening a pull request.
-6. Load the repository root as an unpacked Edge extension.
-7. Manually test initial navigation, F5 reload, `/`, mouse activation, GitHub Turbo navigation, automatic page translation, and multiple tabs.
+6. Run `npm run package` before a release and confirm the generated ZIP has `manifest.json` at its root.
+7. Load the repository root as an unpacked Edge or Chrome extension.
+8. Manually test initial navigation, F5 reload, `/`, mouse activation, GitHub Turbo navigation, automatic page translation, and multiple tabs.
 
 ## Requirements
 

@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [2.8.2] - 2026-07-16
+
+### Fixed
+
+- Release archives now place `manifest.json` directly at the ZIP root instead of inside an extra repository wrapper directory that causes Chrome and Edge to report a missing or unreadable manifest when users select the extracted outer folder.
+- Installation instructions now distinguish the installable extension asset from GitHub's automatically generated source archives and show how to confirm the correct unpacked folder.
+
+### Packaging and validation
+
+- Added a deterministic, dependency-free Node.js packager that includes only extension runtime files and verifies ZIP structure, entry names, sizes, CRC values, normalized source contents, and the packaged manifest version.
+- Normalized tracked text files to LF across platforms so Windows and Linux release checkouts feed the same bytes into packaging.
+- Added regressions that require a root-level manifest, reject the previously shipped wrapped-directory layout, and confirm deterministic archive output.
+- CI now builds and uploads the verified installable ZIP on every push and pull request.
+
 ## [2.8.1] - 2026-07-11
 
 ### Fixed
